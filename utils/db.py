@@ -29,20 +29,26 @@ class DatabaseManager:
         self._setup_ssl_cert()
 
     def _setup_ssl_cert(self):
-        if self.ssl_ca_content:
-            if os.path.isfile(self.ssl_ca_content):
-                self.ssl_ca_path = self.ssl_ca_content
-            else:
-                cert_content = self.ssl_ca_content.replace("\\n", "\n")
-                fd, self.ssl_ca_path = tempfile.mkstemp(suffix=".pem")
-                with os.fdopen(fd, 'w') as f:
-                    f.write(cert_content)
+        if not self.ssl_ca_content:
+            return
+
+        cert_content = self.ssl_ca_content.replace("\\n", "\n")
+        self.ssl_ca_path = "/tmp/aiven_ca.pem"
+
+        with open(self.ssl_ca_path, "w") as f:
+            f.write(cert_content)
+
+        if not os.path.exists(self.ssl_ca_path):
+            raise RuntimeError("SSL CA certificate file was not created")
 
     def _get_connection(self):
         if self.conn is None or not self.conn.open:
             ssl_config = None
             if self.ssl_ca_path:
-                ssl_config = {"ca": self.ssl_ca_path}
+                ssl_config = {
+                    "ca": self.ssl_ca_path,
+                    "check_hostname": True
+                }
             self.conn = pymysql.connect(
                 host=self.host,
                 port=self.port,
