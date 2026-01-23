@@ -57,7 +57,7 @@ class DatabaseManager:
                 database=self.database,
                 ssl=ssl_config,
                 cursorclass=DictCursor,
-                autocommit=True
+                autocommit=False
             )
         return self.conn
 
@@ -67,6 +67,8 @@ class DatabaseManager:
             cursor.execute(query, params)
             if fetch:
                 return cursor.fetchall()
+            else:
+                conn.commit()
 
     def _sanitize_name(self, name: str) -> str:
         sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', str(name))
@@ -183,14 +185,28 @@ class DatabaseManager:
             insert_sql = f"INSERT INTO `{table_name}` ({', '.join(cols)}) VALUES ({placeholders})"
             
             conn = self._get_connection()
-            with conn.cursor() as cursor:
-                for _, row in df_renamed.iterrows():
-                    values = tuple(None if pd.isna(v) else v for v in row.values)
-                    try:
-                        cursor.execute(insert_sql, values)
-                    except:
-                        pass
-            conn.commit()
+            inserted_count = 0
+            failed_count = 0
+            
+            conn.begin()
+            try:
+                with conn.cursor() as cursor:
+                    for idx, row in df_renamed.iterrows():
+                        values = tuple(None if pd.isna(v) else v for v in row.values)
+                        try:
+                            cursor.execute(insert_sql, values)
+                            inserted_count += 1
+                        except Exception as e:
+                            failed_count += 1
+                            print(f"Row {idx} insertion failed: {str(e)[:100]}")
+                conn.commit()
+                print(f"✅ Inserted {inserted_count}/{len(df_renamed)} rows into {table_name}")
+                if failed_count > 0:
+                    print(f"⚠️ {failed_count} rows failed to insert")
+            except Exception as e:
+                conn.rollback()
+                print(f"❌ Transaction failed, rolled back: {str(e)}")
+                raise
         
         summary_text = f"Structured table '{table_name}' with {len(df)} rows. Schema: {schema_info}. Sample columns: {', '.join(list(df.columns)[:5])}"
         summary_embedding = self.embedding_gen.generate_embedding(summary_text)
