@@ -225,23 +225,31 @@ with st.sidebar:
     st.markdown("---")
     
     if st.session_state.active_tab == "chat":
-        st.markdown("<div class='sidebar-header'>Sessions</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sidebar-header'>Chat History</div>", unsafe_allow_html=True)
         
-        if st.button("New Session", use_container_width=True):
+        if st.button("➕ New Chat", use_container_width=True):
             create_new_session()
             st.rerun()
         
-        st.caption(f"Current: {st.session_state.session_id}")
+        st.markdown(f"**Current:** `{st.session_state.session_id}`")
+        st.markdown("---")
         
         try:
             sessions = st.session_state.db.get_all_sessions()
-            for sess in sessions[:10]:
-                label = f"{sess['session_id']} ({sess['message_count']} msgs)"
-                if st.button(label, key=f"sess_{sess['session_id']}", use_container_width=True):
-                    load_session(sess['session_id'])
-                    st.rerun()
-        except:
-            pass
+            if sessions:
+                st.caption(f"📝 {len(sessions)} conversation(s)")
+                for sess in sessions[:10]:
+                    is_current = sess['session_id'] == st.session_state.session_id
+                    label = f"{'🔵' if is_current else '⚪'} {sess['session_id'][:6]}... ({sess['message_count']} msgs)"
+                    
+                    if st.button(label, key=f"sess_{sess['session_id']}", use_container_width=True, 
+                                disabled=is_current):
+                        load_session(sess['session_id'])
+                        st.rerun()
+            else:
+                st.caption("No previous chats")
+        except Exception as e:
+            st.caption("No chat history available")
     
     st.markdown("---")
     
@@ -264,7 +272,7 @@ if st.session_state.active_tab == "upload":
     with col1:
         st.info("**Structured (SQL Path):** CSV, XLSX")
     with col2:
-        st.info("**Unstructured (RAG Path):** PDF, DOCX, TXT, MD, PPTX, Images")
+        st.info("**Unstructured (RAG Path):** PDF, DOCX, TXT, MD, PPTX, ZIP, Images")
     
     uploaded_files = st.file_uploader(
         "Drop files here",
