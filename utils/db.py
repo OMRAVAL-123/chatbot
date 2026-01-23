@@ -162,7 +162,7 @@ class DatabaseManager:
         except:
             pass
         
-        create_sql = f"CREATE TABLE `{table_name}` (id INT AUTO_INCREMENT PRIMARY KEY, {', '.join(columns)})"
+        create_sql = f"CREATE TABLE `{table_name}` ({', '.join(columns)})"
         self._execute(create_sql)
         
         df_renamed = df.rename(columns=col_mapping)
