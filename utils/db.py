@@ -159,11 +159,7 @@ class DatabaseManager:
             
             sample = df[col].dropna().head(100).tolist()
             col_type = self._get_mysql_type(df[col].dtype, sample)
-            
-            if safe_col.lower() == 'id':
-                columns.append(f"`{safe_col}` {col_type} PRIMARY KEY")
-            else:
-                columns.append(f"`{safe_col}` {col_type}")
+            columns.append(f"`{safe_col}` {col_type}")
         
         schema_info = ", ".join([f"{col_mapping[c]} ({str(df[c].dtype)})" for c in df.columns])
         
@@ -173,7 +169,7 @@ class DatabaseManager:
             pass
         
         if has_id_column:
-            create_sql = f"CREATE TABLE `{table_name}` ({', '.join(columns)})"
+            create_sql = f"CREATE TABLE `{table_name}` (auto_id INT AUTO_INCREMENT PRIMARY KEY, {', '.join(columns)})"
         else:
             create_sql = f"CREATE TABLE `{table_name}` (id INT AUTO_INCREMENT PRIMARY KEY, {', '.join(columns)})"
         
