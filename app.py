@@ -230,13 +230,13 @@ with st.sidebar:
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("Upload", use_container_width=True):
+        if st.button("📤", help="Upload", use_container_width=True):
             st.session_state.active_tab = "upload"
     with col2:
-        if st.button("Chat", use_container_width=True):
+        if st.button("💬", help="Chat", use_container_width=True):
             st.session_state.active_tab = "chat"
     with col3:
-        if st.button("Settings", use_container_width=True):
+        if st.button("⚙️", help="Settings", use_container_width=True):
             st.session_state.active_tab = "settings"
     
     st.markdown("---")
@@ -256,12 +256,20 @@ with st.sidebar:
                 for sess in sessions[:8]:
                     is_current = sess['session_id'] == st.session_state.session_id
                     icon = "💬" if is_current else "○"
-                    label = f"{icon} Chat {sess['session_id'][:6]}"
+                    label = f"{icon} {sess['session_id'][:6]}"
                     
-                    if st.button(label, key=f"sess_{sess['session_id']}", 
-                                use_container_width=True, disabled=is_current):
-                        load_session(sess['session_id'])
-                        st.rerun()
+                    col_a, col_b = st.columns([5, 1])
+                    with col_a:
+                        if st.button(label, key=f"sess_{sess['session_id']}", 
+                                    use_container_width=True, disabled=is_current):
+                            load_session(sess['session_id'])
+                            st.rerun()
+                    with col_b:
+                        if st.button("🗑", key=f"del_{sess['session_id']}", use_container_width=True):
+                            st.session_state.db.delete_chat_session(sess['session_id'])
+                            if is_current:
+                                create_new_session()
+                            st.rerun()
         except:
             pass
     
