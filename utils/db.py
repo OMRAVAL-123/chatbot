@@ -336,7 +336,7 @@ class DatabaseManager:
         
         return True, "Valid"
 
-    def generate_sql_with_llm(self, question: str, tables_info: str) -> str:
+    def generate_sql_with_llm(self, question: str, tables_info: str, chat_context: str = "") -> str:
         system_prompt = """You are an expert MySQL query generator. Given a user question and table schema, generate a valid MySQL SELECT query.
 
 RULES:
@@ -345,9 +345,17 @@ RULES:
 3. Use proper MySQL syntax
 4. Use backticks for table and column names
 5. Handle NULL values appropriately
-6. Use LIMIT for large result sets"""
+6. Use LIMIT for large result sets
+7. Use previous conversation context to resolve pronouns and references"""
 
-        user_prompt = f"""Tables available:
+        context_section = ""
+        if chat_context:
+            context_section = f"""Previous conversation context:
+{chat_context}
+
+"""
+
+        user_prompt = f"""{context_section}Tables available:
 {tables_info}
 
 User question: {question}
@@ -389,7 +397,7 @@ Generate the SQL query:"""
             for d in structured_docs
         ])
         
-        sql = self.generate_sql_with_llm(query, tables_info)
+        sql = self.generate_sql_with_llm(query, tables_info, chat_context)
         
         if not sql or sql == ";":
             return {"answer": "Could not generate SQL query.", "sql": "", "data": []}
@@ -402,12 +410,20 @@ Generate the SQL query:"""
             rows = self._execute(sql, fetch=True)
             rows = list(rows) if rows else []
             
-            context = f"Previous conversation:\n{chat_context}\n\n" if chat_context else ""
+            chat_history = []
+            if chat_context:
+                lines = chat_context.strip().split('\n')
+                for line in lines:
+                    if line.startswith('User: '):
+                        chat_history.append({"role": "user", "content": line[6:]})
+                    elif line.startswith('Assistant: '):
+                        chat_history.append({"role": "assistant", "content": line[11:]})
             
             answer, _ = self.llm.structured_db_retrieval(
                 query, 
                 rows[:50], 
-                f"{context}Tables: {tables_info}"
+                f"Tables: {tables_info}",
+                chat_history
             )
             
             return {"answer": answer, "sql": sql, "data": rows[:50]}

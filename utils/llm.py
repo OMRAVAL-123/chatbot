@@ -127,7 +127,8 @@ If the context covers multiple aspects related to the question, address each asp
         return self._call_llm(system_prompt, user_prompt)
 
     def structured_db_retrieval(self, query: str, rows: List[Dict[str, Any]], 
-                                 schema_info: str = "") -> Tuple[str, int]:
+                                 schema_info: str = "", 
+                                 chat_history: List[Dict[str, str]] = None) -> Tuple[str, int]:
         system_prompt = """You are a data analysis expert. Based on the query results from a structured database, provide a clear and insightful answer to the user's question.
 
 INSTRUCTIONS:
@@ -135,7 +136,8 @@ INSTRUCTIONS:
 2. Present key findings clearly
 3. Use tables or lists where appropriate
 4. Highlight important patterns or insights
-5. If the data is limited, acknowledge what can and cannot be concluded"""
+5. If the data is limited, acknowledge what can and cannot be concluded
+6. Use conversation context to understand references and pronouns"""
 
         data_str = "\n".join([str(row) for row in rows[:50]])
         
@@ -149,4 +151,10 @@ User Question: {query}
 
 Provide a detailed analysis and answer based on this data."""
 
+        if chat_history and len(chat_history) > 0:
+            recent_context = chat_history[-10:]
+            history_text = "\n".join([f"{msg['role']}: {msg['content'][:200]}" for msg in recent_context])
+            user_prompt = f"Previous conversation context:\n{history_text}\n\n{user_prompt}"
+
         return self._call_llm(system_prompt, user_prompt)
+
