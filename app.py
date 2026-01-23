@@ -242,39 +242,28 @@ with st.sidebar:
     st.markdown("---")
     
     if st.session_state.active_tab == "chat":
-        st.markdown("<div class='sidebar-header'>Chat History</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sidebar-header'>💬 Chats</div>", unsafe_allow_html=True)
         
-        if st.button("➕ New Chat", use_container_width=True):
+        if st.button("✨ New Chat", use_container_width=True):
             create_new_session()
             st.rerun()
         
-        st.markdown(f"**Current:** `{st.session_state.session_id}`")
-        st.markdown("---")
+        st.caption(f"Active: {st.session_state.session_id}")
         
         try:
             sessions = st.session_state.db.get_all_sessions()
             if sessions:
-                st.caption(f"📝 {len(sessions)} conversation(s)")
-                for sess in sessions[:10]:
+                for sess in sessions[:8]:
                     is_current = sess['session_id'] == st.session_state.session_id
-                    label = f"{'🔵' if is_current else '⚪'} {sess['session_id'][:6]}... ({sess['message_count']} msgs)"
+                    icon = "💬" if is_current else "○"
+                    label = f"{icon} Chat {sess['session_id'][:6]}"
                     
-                    col_sess1, col_sess2 = st.columns([4, 1])
-                    with col_sess1:
-                        if st.button(label, key=f"sess_{sess['session_id']}", use_container_width=True, 
-                                    disabled=is_current):
-                            load_session(sess['session_id'])
-                            st.rerun()
-                    with col_sess2:
-                        if st.button("🗑️", key=f"del_{sess['session_id']}", use_container_width=True):
-                            st.session_state.db.delete_chat_session(sess['session_id'])
-                            if sess['session_id'] == st.session_state.session_id:
-                                create_new_session()
-                            st.rerun()
-            else:
-                st.caption("No previous chats")
-        except Exception as e:
-            st.caption("No chat history available")
+                    if st.button(label, key=f"sess_{sess['session_id']}", 
+                                use_container_width=True, disabled=is_current):
+                        load_session(sess['session_id'])
+                        st.rerun()
+        except:
+            pass
     
     st.markdown("---")
     
