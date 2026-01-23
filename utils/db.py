@@ -2,6 +2,7 @@ import os
 import json
 import pickle
 import re
+import tempfile
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 import pymysql
@@ -20,16 +21,28 @@ class DatabaseManager:
         self.user = os.getenv("AIVEN_MYSQL_USER", "")
         self.password = os.getenv("AIVEN_MYSQL_PASSWORD", "")
         self.database = os.getenv("AIVEN_MYSQL_DATABASE", "")
-        self.ssl_ca = os.getenv("AIVEN_MYSQL_SSL_CA", "")
+        self.ssl_ca_content = os.getenv("AIVEN_MYSQL_SSL_CA", "")
+        self.ssl_ca_path = None
         self.llm = LLMHandler()
         self.embedding_gen = EmbeddingGenerator()
         self.conn = None
+        self._setup_ssl_cert()
+
+    def _setup_ssl_cert(self):
+        if self.ssl_ca_content:
+            if os.path.isfile(self.ssl_ca_content):
+                self.ssl_ca_path = self.ssl_ca_content
+            else:
+                cert_content = self.ssl_ca_content.replace("\\n", "\n")
+                fd, self.ssl_ca_path = tempfile.mkstemp(suffix=".pem")
+                with os.fdopen(fd, 'w') as f:
+                    f.write(cert_content)
 
     def _get_connection(self):
         if self.conn is None or not self.conn.open:
             ssl_config = None
-            if self.ssl_ca:
-                ssl_config = {"ca": self.ssl_ca}
+            if self.ssl_ca_path:
+                ssl_config = {"ca": self.ssl_ca_path}
             self.conn = pymysql.connect(
                 host=self.host,
                 port=self.port,
