@@ -104,6 +104,39 @@ class DatabaseManager:
             return 0.0
         return float(dot / (norm1 * norm2))
 
+    def _build_data_table(self, rows: List[Dict[str, Any]], max_rows: int = 15) -> str:
+        if not rows:
+            return "## 📊 Data Retrieved (0 rows)\n\n**No matching data found in the database.**"
+        
+        all_cols = list(rows[0].keys())
+        priority_cols = ['product_id', 'product_name', 'name', 'brand', 'sub_category', 'color', 'size', 'price', 'rating', 'gender']
+        display_cols = [c for c in priority_cols if c in all_cols]
+        if len(display_cols) < 4:
+            display_cols = all_cols[:6]
+        
+        header = "| " + " | ".join(display_cols) + " |"
+        separator = "| " + " | ".join(["---"] * len(display_cols)) + " |"
+        
+        table_rows = []
+        for row in rows[:max_rows]:
+            values = []
+            for col in display_cols:
+                val = row.get(col, "")
+                if isinstance(val, float):
+                    val = f"{val:.2f}"
+                elif isinstance(val, str) and len(val) > 40:
+                    val = val[:37] + "..."
+                values.append(str(val))
+            table_rows.append("| " + " | ".join(values) + " |")
+        
+        table = "\n".join([header, separator] + table_rows)
+        
+        remaining = len(rows) - max_rows
+        note = f"\n\n*Showing {min(len(rows), max_rows)} of {len(rows)} rows*" if remaining > 0 else ""
+        
+        return f"## 📊 Data Retrieved ({len(rows)} rows)\n\n{table}{note}"
+
+
     def initialize_tables(self):
         self._execute("""
             CREATE TABLE IF NOT EXISTS docs_summary (
@@ -427,6 +460,8 @@ Analyze the sample rows to understand the data structure and values. Generate th
             rows = self._execute(sql, fetch=True)
             rows = list(rows) if rows else []
             
+            data_section = self._build_data_table(rows)
+            
             chat_history = []
             if chat_context:
                 lines = chat_context.strip().split('\n')
@@ -436,14 +471,16 @@ Analyze the sample rows to understand the data structure and values. Generate th
                     elif line.startswith('Assistant: '):
                         chat_history.append({"role": "assistant", "content": line[11:]})
             
-            answer, _ = self.llm.structured_db_retrieval(
+            llm_analysis, _ = self.llm.structured_db_retrieval(
                 query, 
                 rows[:50], 
                 f"Tables: {tables_info}",
                 chat_history
             )
             
-            return {"answer": answer, "sql": sql, "data": rows[:50]}
+            full_answer = f"{data_section}\n\n{llm_analysis}"
+            
+            return {"answer": full_answer, "sql": sql, "data": rows[:50]}
             
         except Exception as e:
             return {"answer": f"Query execution error: {str(e)}", "sql": sql, "data": []}
