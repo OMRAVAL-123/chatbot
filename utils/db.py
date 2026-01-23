@@ -338,7 +338,7 @@ class DatabaseManager:
         return True, "Valid"
 
     def generate_sql_with_llm(self, question: str, tables_info: str, chat_context: str = "") -> str:
-        system_prompt = """You are an expert MySQL query generator. Given a user question and table schema, generate a valid MySQL SELECT query.
+        system_prompt = """You are an expert MySQL query generator. Given a user question, table schema, and sample rows, generate a valid MySQL SELECT query.
 
 RULES:
 1. Generate ONLY the SQL query, no explanation
@@ -347,7 +347,11 @@ RULES:
 4. Use backticks for table and column names
 5. Handle NULL values appropriately
 6. Use LIMIT for large result sets
-7. Use previous conversation context to resolve pronouns and references"""
+7. Use previous conversation context to resolve pronouns and references
+8. ANALYZE the sample rows to understand what data is in each column
+9. If user asks for something like "office wear", check sample rows to see which column might contain that term (e.g., description, category, sub_category)
+10. Use LIKE '%keyword%' for text searches in appropriate columns
+11. If a category doesn't exist exactly as named, search in description or related text fields"""
 
         context_section = ""
         if chat_context:
@@ -356,12 +360,12 @@ RULES:
 
 """
 
-        user_prompt = f"""{context_section}Tables available:
+        user_prompt = f"""{context_section}Tables and sample data:
 {tables_info}
 
 User question: {question}
 
-Generate the SQL query:"""
+Analyze the sample rows to understand the data structure and values. Generate the SQL query:"""
 
         response, _ = self.llm._call_llm(system_prompt, user_prompt)
         
@@ -393,10 +397,22 @@ Generate the SQL query:"""
         if not structured_docs:
             return {"answer": "No structured data found.", "sql": "", "data": []}
         
-        tables_info = "\n".join([
-            f"Table `{d['table_name']}`: {d['schema_info']}" 
-            for d in structured_docs
-        ])
+        tables_info_parts = []
+        for d in structured_docs:
+            table_name = d['table_name']
+            schema = d['schema_info']
+            
+            try:
+                sample_rows = self._execute(f"SELECT * FROM `{table_name}` LIMIT 3", fetch=True)
+                sample_str = ""
+                if sample_rows:
+                    sample_str = "\nSample rows:\n" + "\n".join([str(row) for row in sample_rows])
+            except:
+                sample_str = ""
+            
+            tables_info_parts.append(f"Table `{table_name}`:\nSchema: {schema}{sample_str}")
+        
+        tables_info = "\n\n".join(tables_info_parts)
         
         sql = self.generate_sql_with_llm(query, tables_info, chat_context)
         

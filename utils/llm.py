@@ -69,26 +69,28 @@ Summarize this conversation."""
         return self._call_llm(system_prompt, user_prompt)
 
     def _build_rag_system_prompt(self) -> str:
-        return """You are an expert knowledge assistant with deep expertise in analyzing and synthesizing information from documents. Your role is to provide comprehensive, well-structured, and detailed answers based on the context provided.
+        return """You are an expert knowledge assistant. Your role is to provide accurate answers based ONLY on the context provided.
 
-INSTRUCTIONS:
+CRITICAL RULES - NEVER VIOLATE:
+1. ONLY use information that is EXPLICITLY present in the provided context chunks
+2. NEVER invent, fabricate, or hallucinate any data, names, products, or facts
+3. If the context doesn't contain relevant information, say "The documents do not contain information about [topic]"
+4. If asked about something not in the context, clearly state it's not available
+
+RESPONSE FORMAT:
 1. Analyze all provided context chunks thoroughly before responding
-2. Generate a detailed, descriptive response that covers ALL relevant aspects found in the chunks
+2. Generate a response that covers ONLY what is found in the chunks
 3. Structure your answer with clear sections if multiple subtopics are involved
 4. Use bullet points or numbered lists where appropriate for clarity
-5. Include specific details, examples, or data points from the context
-6. If the context mentions related concepts or subtopics, explain how they connect
-7. Maintain accuracy - only use information present in the context
-8. Write in a professional, informative tone suitable for academic or professional use
-9. Aim for comprehensive coverage - do not leave out relevant information from the chunks
-10. If context is limited, provide what you can and acknowledge the limitation
+5. Include specific details from the context - quote when helpful
+6. Maintain accuracy - only use information present in the context
+7. If context is limited or doesn't match the question, acknowledge this clearly
 
-FORMATTING GUIDELINES:
-- Use headers (##) to separate major sections if answer spans multiple topics
-- Use bullet points for lists of items, features, or steps
-- Use bold for key terms or important concepts
-- Include brief explanations for technical terms if present
-- Provide a concise summary at the end for longer responses"""
+FORBIDDEN ACTIONS:
+- Do NOT create example data or made-up information
+- Do NOT assume information exists if it's not in the context
+- Do NOT provide general knowledge not found in the context
+- Do NOT invent product names, prices, or any specific values"""
 
     def _build_rag_user_prompt(self, query: str, chunks: List[Dict[str, Any]]) -> str:
         context_parts = []
@@ -129,27 +131,41 @@ If the context covers multiple aspects related to the question, address each asp
     def structured_db_retrieval(self, query: str, rows: List[Dict[str, Any]], 
                                  schema_info: str = "", 
                                  chat_history: List[Dict[str, str]] = None) -> Tuple[str, int]:
-        system_prompt = """You are a data analysis expert. Based on the query results from a structured database, provide a clear and insightful answer to the user's question.
+        system_prompt = """You are a data analysis expert. You MUST follow these STRICT rules:
 
-INSTRUCTIONS:
-1. Analyze the data provided thoroughly
-2. Present key findings clearly
-3. Use tables or lists where appropriate
-4. Highlight important patterns or insights
-5. If the data is limited, acknowledge what can and cannot be concluded
-6. Use conversation context to understand references and pronouns"""
+CRITICAL RULES - NEVER VIOLATE:
+1. ONLY use data that is EXPLICITLY provided in the "Query Results" section below
+2. NEVER invent, fabricate, or hallucinate any data, products, names, or values
+3. If no data is provided or data is empty, say "No matching data found in the database"
+4. If the query results don't contain what the user asked for, say "The database does not contain [what user asked for]"
+5. Show the ACTUAL rows returned - do not modify or add to them
+6. If there are 0 rows, clearly state that no results were found
 
+RESPONSE FORMAT:
+- First, state how many rows were retrieved
+- Then show the actual data from the results
+- Finally, provide analysis ONLY based on the actual data shown
+- Use conversation context to understand references and pronouns
+
+FORBIDDEN ACTIONS:
+- Do NOT create example data
+- Do NOT make up product names, brands, or any values
+- Do NOT assume data exists if it's not in the results"""
+
+        if not rows or len(rows) == 0:
+            return "No matching data found in the database for your query. The search returned 0 results.", 0
+        
         data_str = "\n".join([str(row) for row in rows[:50]])
         
         user_prompt = f"""Schema Information:
 {schema_info}
 
-Query Results:
+Query Results ({len(rows)} rows retrieved):
 {data_str}
 
 User Question: {query}
 
-Provide a detailed analysis and answer based on this data."""
+IMPORTANT: Only analyze the EXACT data shown above. Do not invent any additional data."""
 
         if chat_history and len(chat_history) > 0:
             recent_context = chat_history[-10:]
