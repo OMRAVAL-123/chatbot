@@ -109,10 +109,7 @@ class DatabaseManager:
             return "## 📊 Data Retrieved (0 rows)\n\n**No matching data found in the database.**"
         
         all_cols = list(rows[0].keys())
-        priority_cols = ['product_id', 'product_name', 'name', 'brand', 'sub_category', 'color', 'size', 'price', 'rating', 'gender']
-        display_cols = [c for c in priority_cols if c in all_cols]
-        if len(display_cols) < 4:
-            display_cols = all_cols[:6]
+        display_cols = all_cols[:10]
         
         header = "| " + " | ".join(display_cols) + " |"
         separator = "| " + " | ".join(["---"] * len(display_cols)) + " |"
@@ -124,8 +121,8 @@ class DatabaseManager:
                 val = row.get(col, "")
                 if isinstance(val, float):
                     val = f"{val:.2f}"
-                elif isinstance(val, str) and len(val) > 40:
-                    val = val[:37] + "..."
+                elif isinstance(val, str) and len(val) > 35:
+                    val = val[:32] + "..."
                 values.append(str(val))
             table_rows.append("| " + " | ".join(values) + " |")
         
@@ -134,7 +131,11 @@ class DatabaseManager:
         remaining = len(rows) - max_rows
         note = f"\n\n*Showing {min(len(rows), max_rows)} of {len(rows)} rows*" if remaining > 0 else ""
         
-        return f"## 📊 Data Retrieved ({len(rows)} rows)\n\n{table}{note}"
+        extra_cols = ""
+        if len(all_cols) > 10:
+            extra_cols = f"\n\n*Additional columns not shown: {', '.join(all_cols[10:])}*"
+        
+        return f"## 📊 Data Retrieved ({len(rows)} rows)\n\n{table}{note}{extra_cols}"
 
 
     def initialize_tables(self):

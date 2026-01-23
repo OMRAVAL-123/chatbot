@@ -137,12 +137,16 @@ CRITICAL RULES:
 1. The actual data table is already shown to the user - DO NOT repeat it
 2. ONLY provide analysis and insights based on the provided data
 3. NEVER invent or make up any data - only refer to what's in the results
-4. If no data matches what user asked for, say "The retrieved data does not contain [what user asked for]"
+4. If the data doesn't exactly match what user asked for, CLEARLY state this
+   Example: "Note: The database doesn't have 'formal wear' category. Showing 'Formal Shoes' instead."
+5. Be honest about what columns/categories actually exist in the data
 
 RESPONSE FORMAT:
 ## 💡 Analysis
 
-Provide insights in bullet points:
+First, clarify if the data matches the query or a close alternative was found.
+
+Then provide insights in bullet points:
 - Key findings from the data
 - Price range if applicable  
 - Patterns or trends noticed
@@ -160,7 +164,10 @@ Keep it concise and visual. Use bullet points and bold for key terms."""
 
 User Question: {query}
 
-Provide ONLY analysis (the data table is already shown). Be concise with bullet points."""
+IMPORTANT: 
+1. If the data category differs from what user asked, state this clearly
+2. Provide ONLY analysis (the data table is already shown)
+3. Be concise with bullet points"""
 
         if chat_history and len(chat_history) > 0:
             recent_context = chat_history[-10:]
