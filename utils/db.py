@@ -185,24 +185,25 @@ class DatabaseManager:
             insert_sql = f"INSERT INTO `{table_name}` ({', '.join(cols)}) VALUES ({placeholders})"
             
             conn = self._get_connection()
+            batch_size = 1000
+            total_rows = len(df_renamed)
             inserted_count = 0
-            failed_count = 0
+            
+            all_values = []
+            for idx, row in df_renamed.iterrows():
+                values = tuple(None if pd.isna(v) else v for v in row.values)
+                all_values.append(values)
             
             conn.begin()
             try:
                 with conn.cursor() as cursor:
-                    for idx, row in df_renamed.iterrows():
-                        values = tuple(None if pd.isna(v) else v for v in row.values)
-                        try:
-                            cursor.execute(insert_sql, values)
-                            inserted_count += 1
-                        except Exception as e:
-                            failed_count += 1
-                            print(f"Row {idx} insertion failed: {str(e)[:100]}")
+                    for i in range(0, len(all_values), batch_size):
+                        batch = all_values[i:i + batch_size]
+                        cursor.executemany(insert_sql, batch)
+                        inserted_count += len(batch)
+                        print(f"📦 Inserted batch {i//batch_size + 1}: {inserted_count}/{total_rows} rows")
                 conn.commit()
-                print(f"✅ Inserted {inserted_count}/{len(df_renamed)} rows into {table_name}")
-                if failed_count > 0:
-                    print(f"⚠️ {failed_count} rows failed to insert")
+                print(f"✅ Inserted {inserted_count} rows into {table_name}")
             except Exception as e:
                 conn.rollback()
                 print(f"❌ Transaction failed, rolled back: {str(e)}")
