@@ -148,12 +148,22 @@ class DatabaseManager:
         
         columns = []
         col_mapping = {}
+        has_id_column = False
+        
         for col in df.columns:
             safe_col = self._sanitize_name(col)
             col_mapping[col] = safe_col
+            
+            if safe_col.lower() == 'id':
+                has_id_column = True
+            
             sample = df[col].dropna().head(100).tolist()
             col_type = self._get_mysql_type(df[col].dtype, sample)
-            columns.append(f"`{safe_col}` {col_type}")
+            
+            if safe_col.lower() == 'id':
+                columns.append(f"`{safe_col}` {col_type} PRIMARY KEY")
+            else:
+                columns.append(f"`{safe_col}` {col_type}")
         
         schema_info = ", ".join([f"{col_mapping[c]} ({str(df[c].dtype)})" for c in df.columns])
         
@@ -162,7 +172,11 @@ class DatabaseManager:
         except:
             pass
         
-        create_sql = f"CREATE TABLE `{table_name}` ({', '.join(columns)})"
+        if has_id_column:
+            create_sql = f"CREATE TABLE `{table_name}` ({', '.join(columns)})"
+        else:
+            create_sql = f"CREATE TABLE `{table_name}` (id INT AUTO_INCREMENT PRIMARY KEY, {', '.join(columns)})"
+        
         self._execute(create_sql)
         
         df_renamed = df.rename(columns=col_mapping)
