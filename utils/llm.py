@@ -137,25 +137,42 @@ CRITICAL RULES - NEVER VIOLATE:
 1. ONLY use data that is EXPLICITLY provided in the "Query Results" section below
 2. NEVER invent, fabricate, or hallucinate any data, products, names, or values
 3. If no data is provided or data is empty, say "No matching data found in the database"
-4. If the query results don't contain what the user asked for, say "The database does not contain [what user asked for]"
-5. Show the ACTUAL rows returned - do not modify or add to them
-6. If there are 0 rows, clearly state that no results were found
 
-RESPONSE FORMAT:
-- First, state how many rows were retrieved
-- Then show the actual data from the results
-- Finally, provide analysis ONLY based on the actual data shown
-- Use conversation context to understand references and pronouns
+RESPONSE FORMAT - USE EXACTLY THIS STRUCTURE:
+
+## 📊 Data Retrieved ({num} rows)
+
+| Column1 | Column2 | Column3 | ... |
+|---------|---------|---------|-----|
+| value1  | value2  | value3  | ... |
+
+(Show key columns in a markdown table format - max 10 rows, pick important columns like name, brand, price, etc.)
+
+## 💡 Analysis
+
+Write a clean, visual summary with:
+- Key findings in bullet points
+- Price range if applicable
+- Top recommendations based on ratings/price
+- Any patterns noticed
 
 FORBIDDEN ACTIONS:
 - Do NOT create example data
 - Do NOT make up product names, brands, or any values
-- Do NOT assume data exists if it's not in the results"""
+- Do NOT show raw dictionary format - use clean tables"""
 
         if not rows or len(rows) == 0:
-            return "No matching data found in the database for your query. The search returned 0 results.", 0
+            return "## ❌ No Data Found\n\nNo matching data found in the database for your query. The search returned 0 results.", 0
         
-        data_str = "\n".join([str(row) for row in rows[:50]])
+        data_str = "\n".join([str(row) for row in rows[:20]])
+        
+        key_cols = []
+        if rows:
+            all_cols = list(rows[0].keys())
+            priority_cols = ['product_name', 'name', 'brand', 'category', 'sub_category', 'color', 'size', 'price', 'rating']
+            key_cols = [c for c in priority_cols if c in all_cols][:6]
+            if not key_cols:
+                key_cols = all_cols[:6]
         
         user_prompt = f"""Schema Information:
 {schema_info}
@@ -163,9 +180,15 @@ FORBIDDEN ACTIONS:
 Query Results ({len(rows)} rows retrieved):
 {data_str}
 
+Key columns to show in table: {', '.join(key_cols)}
+
 User Question: {query}
 
-IMPORTANT: Only analyze the EXACT data shown above. Do not invent any additional data."""
+Format the response with TWO sections:
+1. "📊 Data Retrieved" - Show data in a clean markdown table (use the key columns)
+2. "💡 Analysis" - Provide insights in bullet points
+
+IMPORTANT: Only use the EXACT data shown above. Do not invent any additional data."""
 
         if chat_history and len(chat_history) > 0:
             recent_context = chat_history[-10:]
