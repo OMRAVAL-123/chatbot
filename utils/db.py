@@ -558,6 +558,11 @@ Generate the SQL query:"""
         """, fetch=True)
         return list(rows) if rows else []
 
+    def delete_chat_session(self, session_id: str):
+        self._execute("""
+            DELETE FROM chat_history WHERE session_id = %s
+        """, (session_id,))
+
     def delete_all_data(self):
         self._execute("DELETE FROM chat_history")
         self._execute("DELETE FROM unstructured_docs")

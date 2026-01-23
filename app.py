@@ -106,6 +106,20 @@ st.markdown("""
         transform: scale(1.02);
         box-shadow: 0 5px 15px rgba(102,126,234,0.4);
     }
+    .delete-warning {
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+        color: white;
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+        border-left: 5px solid #c92a2a;
+    }
+    .stats-card {
+        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        text-align: center;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -214,13 +228,16 @@ st.markdown("<h1 class='main-header'>Document Chatbot</h1>", unsafe_allow_html=T
 with st.sidebar:
     st.markdown("<div class='sidebar-header'>Navigation</div>", unsafe_allow_html=True)
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Upload", use_container_width=True):
             st.session_state.active_tab = "upload"
     with col2:
         if st.button("Chat", use_container_width=True):
             st.session_state.active_tab = "chat"
+    with col3:
+        if st.button("Settings", use_container_width=True):
+            st.session_state.active_tab = "settings"
     
     st.markdown("---")
     
@@ -242,10 +259,18 @@ with st.sidebar:
                     is_current = sess['session_id'] == st.session_state.session_id
                     label = f"{'🔵' if is_current else '⚪'} {sess['session_id'][:6]}... ({sess['message_count']} msgs)"
                     
-                    if st.button(label, key=f"sess_{sess['session_id']}", use_container_width=True, 
-                                disabled=is_current):
-                        load_session(sess['session_id'])
-                        st.rerun()
+                    col_sess1, col_sess2 = st.columns([4, 1])
+                    with col_sess1:
+                        if st.button(label, key=f"sess_{sess['session_id']}", use_container_width=True, 
+                                    disabled=is_current):
+                            load_session(sess['session_id'])
+                            st.rerun()
+                    with col_sess2:
+                        if st.button("🗑️", key=f"del_{sess['session_id']}", use_container_width=True):
+                            st.session_state.db.delete_chat_session(sess['session_id'])
+                            if sess['session_id'] == st.session_state.session_id:
+                                create_new_session()
+                            st.rerun()
             else:
                 st.caption("No previous chats")
         except Exception as e:
@@ -395,6 +420,49 @@ elif st.session_state.active_tab == "chat":
                 st.markdown(f"**[{chunk['source']} | Page {chunk['page_num']} | Score: {chunk['score']:.2f}]**")
                 st.write(chunk["text"][:300] + "..." if len(chunk["text"]) > 300 else chunk["text"])
                 st.markdown("---")
+
+
+elif st.session_state.active_tab == "settings":
+    st.markdown("### ⚙️ Settings & Management")
+    
+    st.markdown("---")
+    st.markdown("#### 🗑️ Delete Entire Database")
+    st.warning("⚠️ This action will delete ALL documents, chat history, and data tables. This cannot be undone!")
+    
+    password = st.text_input("Enter password to confirm deletion:", type="password", key="delete_password")
+    
+    if st.button("🗑️ Delete All Data", type="primary"):
+        if password == "Jaymahadev@789":
+            with st.spinner("Deleting all data..."):
+                try:
+                    st.session_state.db.delete_all_data()
+                    st.success("✅ All data has been deleted successfully!")
+                    create_new_session()
+                    st.info("Please refresh the page to continue.")
+                except Exception as e:
+                    st.error(f"❌ Error deleting data: {str(e)}")
+        elif password:
+            st.error("❌ Incorrect password! Access denied.")
+        else:
+            st.warning("⚠️ Please enter the password to proceed.")
+    
+    st.markdown("---")
+    st.markdown("#### 📊 Database Statistics")
+    
+    try:
+        docs = st.session_state.db.get_all_documents()
+        sessions = st.session_state.db.get_all_sessions()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Documents", len(docs))
+        with col2:
+            st.metric("Total Chats", len(sessions))
+        with col3:
+            total_msgs = sum(s['message_count'] for s in sessions)
+            st.metric("Total Messages", total_msgs)
+    except Exception as e:
+        st.error(f"Error loading statistics: {str(e)}")
 
 
 st.markdown("---")
