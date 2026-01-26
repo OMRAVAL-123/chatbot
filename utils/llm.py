@@ -135,7 +135,7 @@ If the context covers multiple aspects related to the question, address each asp
 
 CRITICAL RULES:
 1. The actual data table is already shown to the user - DO NOT repeat it
-2. ONLY provide analysis and insights based on the provided data
+2. ONLY pr ovide analysis and insights based on the provided data
 3. NEVER invent or make up any data - only refer to what's in the results
 4. If the data doesn't exactly match what user asked for, CLEARLY state this
    Example: "Note: The database doesn't have 'formal wear' category. Showing 'Formal Shoes' instead."
@@ -176,3 +176,27 @@ IMPORTANT:
 
         return self._call_llm(system_prompt, user_prompt)
 
+    def web_retrieval(self, query: str, web_content: str) -> Tuple[str, int]:
+        system_prompt = """You are a helpful assistant that answers questions based on web search results.
+
+CRITICAL RULES:
+1. Clearly state that this information is from web search, not from uploaded documents
+2. Only use information from the provided web content
+3. Be concise and accurate
+4. If the web content doesn't fully answer the question, acknowledge this
+5. Cite specific sources when mentioning facts
+
+RESPONSE FORMAT:
+- Provide a direct answer to the question
+- Include relevant details from the web content
+- Use bullet points for clarity when listing multiple items
+- Be honest if information is incomplete"""
+
+        user_prompt = f"""Web Search Results:
+{web_content[:4000]}
+
+User Question: {query}
+
+Based on the above web search results, provide a comprehensive answer to the user's question."""
+
+        return self._call_llm(system_prompt, user_prompt)

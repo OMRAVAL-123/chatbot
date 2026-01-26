@@ -4,7 +4,6 @@ import zipfile
 import tempfile
 from typing import List, Dict, Any
 from PIL import Image
-
 try:
     import pytesseract
 except ImportError:

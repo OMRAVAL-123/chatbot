@@ -10,6 +10,7 @@ load_dotenv()
 from utils.docsreciever import DocumentProcessor
 from utils.db import DatabaseManager
 from utils.rag import SemanticChunker
+from utils.audio_handler import AudioInputHandler
 
 st.set_page_config(
     page_title="Document Chatbot",
@@ -135,6 +136,9 @@ if "processor" not in st.session_state:
 
 if "chunker" not in st.session_state:
     st.session_state.chunker = SemanticChunker()
+
+if "audio_handler" not in st.session_state:
+    st.session_state.audio_handler = AudioInputHandler()
 
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
@@ -359,25 +363,48 @@ elif st.session_state.active_tab == "chat":
                 </div>
                 """, unsafe_allow_html=True)
     
-    col1, col2 = st.columns([6, 1])
+    col1, col2, col3 = st.columns([5, 1, 1])
     
     with col1:
         user_input = st.text_input(
             "Ask about your documents...",
             key="user_input",
-            placeholder="Type your question..."
+            placeholder="Type your question or click 🎤 to speak..."
         )
     
     with col2:
-        send = st.button("Send")
+        record_button = st.button("🎤 Record", use_container_width=True)
     
-    if send and user_input:
-        st.session_state.messages.append({"role": "user", "content": user_input})
+    with col3:
+        send = st.button("Send", use_container_width=True)
+    
+    final_query = None
+    
+    if record_button:
+        with st.spinner("🎤 Listening... Speak now!"):
+            result = st.session_state.audio_handler.transcribe_from_microphone(timeout=10, phrase_time_limit=30)
+            if result["success"]:
+                final_query = result["text"]
+                st.success(f"✅ Transcribed: {final_query}")
+                st.session_state.last_transcription = final_query
+            else:
+                st.error(f"❌ {result['error']}")
+    
+    if hasattr(st.session_state, 'last_transcription') and st.session_state.last_transcription and not user_input:
+        user_input = st.session_state.last_transcription
+    
+    if user_input:
+        final_query = user_input
+    
+    if send and final_query:
+        if hasattr(st.session_state, 'last_transcription'):
+            del st.session_state.last_transcription
+        st.session_state.messages.append({"role": "user", "content": final_query})
         
         with st.spinner("Processing query..."):
             result = st.session_state.db.process_user_query(
                 st.session_state.session_id,
-                user_input
+                final_query
             )
         
         st.session_state.messages.append({"role": "assistant", "content": result["answer"]})
@@ -392,13 +419,20 @@ elif st.session_state.active_tab == "chat":
         if result.get("sql"):
             st.session_state.last_sql = result["sql"]
             st.session_state.last_sql_data = result.get("data", [])
+            st.session_state.last_sql_full_data = result.get("full_data", [])
         else:
             st.session_state.last_sql = None
+            st.session_state.last_sql_full_data = None
         
         if result.get("chunks"):
             st.session_state.last_chunks = result["chunks"]
         else:
             st.session_state.last_chunks = None
+        
+        if result.get("web_sources"):
+            st.session_state.last_web_sources = result["web_sources"]
+        else:
+            st.session_state.last_web_sources = None
         
         st.rerun()
     
@@ -406,16 +440,34 @@ elif st.session_state.active_tab == "chat":
         st.markdown(f"<div class='routing-info'>{st.session_state.last_routing}</div>", unsafe_allow_html=True)
     
     if hasattr(st.session_state, 'last_sql') and st.session_state.last_sql:
-        with st.expander("SQL Query"):
+        with st.expander("📊 SQL Query & Full Data", expanded=False):
+            st.markdown("**Generated SQL Query:**")
             st.markdown(f"<div class='sql-box'>{st.session_state.last_sql}</div>", unsafe_allow_html=True)
-            if st.session_state.last_sql_data:
-                st.dataframe(pd.DataFrame(st.session_state.last_sql_data))
+            
+            if hasattr(st.session_state, 'last_sql_full_data') and st.session_state.last_sql_full_data:
+                st.markdown(f"**Complete Query Results ({len(st.session_state.last_sql_full_data)} rows):**")
+                st.dataframe(pd.DataFrame(st.session_state.last_sql_full_data), use_container_width=True)
+                
+                csv = pd.DataFrame(st.session_state.last_sql_full_data).to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Full Data (CSV)",
+                    data=csv,
+                    file_name="query_results.csv",
+                    mime="text/csv"
+                )
     
     if hasattr(st.session_state, 'last_chunks') and st.session_state.last_chunks:
         with st.expander("Retrieved Chunks"):
             for i, chunk in enumerate(st.session_state.last_chunks):
                 st.markdown(f"**[{chunk['source']} | Page {chunk['page_num']} | Score: {chunk['score']:.2f}]**")
                 st.write(chunk["text"][:300] + "..." if len(chunk["text"]) > 300 else chunk["text"])
+                st.markdown("---")
+    
+    if hasattr(st.session_state, 'last_web_sources') and st.session_state.last_web_sources:
+        with st.expander("🌐 Web Sources"):
+            for source in st.session_state.last_web_sources:
+                st.markdown(f"**[{source['title']}]({source['link']})**")
+                st.write(source.get('snippet', '')[:200])
                 st.markdown("---")
 
 

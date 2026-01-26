@@ -178,6 +178,45 @@ class DatabaseManager:
             )
         """)
 
+    def _generate_column_statistics(self, df: pd.DataFrame) -> str:
+        stats_parts = []
+        
+        for col in df.columns:
+            col_data = df[col].dropna()
+            if len(col_data) == 0:
+                continue
+            
+            dtype_str = str(df[col].dtype).lower()
+            
+            if 'int' in dtype_str or 'float' in dtype_str or 'double' in dtype_str:
+                try:
+                    mean_val = col_data.mean()
+                    median_val = col_data.median()
+                    mode_val = col_data.mode().iloc[0] if not col_data.mode().empty else None
+                    std_val = col_data.std()
+                    min_val = col_data.min()
+                    max_val = col_data.max()
+                    
+                    stats_parts.append(
+                        f"Column '{col}' (NUMERICAL): mean={mean_val:.2f}, median={median_val:.2f}, "
+                        f"mode={mode_val}, std_dev={std_val:.2f}, min={min_val}, max={max_val}"
+                    )
+                except:
+                    stats_parts.append(f"Column '{col}' (NUMERICAL): statistics unavailable")
+            else:
+                unique_vals = col_data.unique()
+                if len(unique_vals) <= 50:
+                    unique_str = ", ".join([str(v)[:50] for v in unique_vals[:50]])
+                    stats_parts.append(f"Column '{col}' (CATEGORICAL): unique_values=[{unique_str}]")
+                else:
+                    sample_vals = ", ".join([str(v)[:50] for v in unique_vals[:10]])
+                    stats_parts.append(
+                        f"Column '{col}' (TEXT/CATEGORICAL): {len(unique_vals)} unique values, "
+                        f"samples=[{sample_vals}...]"
+                    )
+        
+        return "\n".join(stats_parts)
+
     def ingest_structured_data(self, df: pd.DataFrame, filename: str) -> Dict[str, Any]:
         base_name = re.sub(r'[^a-zA-Z0-9]', '_', os.path.splitext(filename)[0])
         table_name = f"data_{base_name}".lower()[:64]
@@ -198,6 +237,8 @@ class DatabaseManager:
             columns.append(f"`{safe_col}` {col_type}")
         
         schema_info = ", ".join([f"{col_mapping[c]} ({str(df[c].dtype)})" for c in df.columns])
+        
+        column_statistics = self._generate_column_statistics(df)
         
         try:
             self._execute(f"DROP TABLE IF EXISTS `{table_name}`")
@@ -243,7 +284,7 @@ class DatabaseManager:
                 print(f"❌ Transaction failed, rolled back: {str(e)}")
                 raise
         
-        summary_text = f"Structured table '{table_name}' with {len(df)} rows. Schema: {schema_info}. Sample columns: {', '.join(list(df.columns)[:5])}"
+        summary_text = f"Table '{table_name}' with {len(df)} rows.\n\nColumn Statistics:\n{column_statistics}\n\nSchema: {schema_info}"
         summary_embedding = self.embedding_gen.generate_embedding(summary_text)
         summary_blob = pickle.dumps(summary_embedding)
         
@@ -429,33 +470,33 @@ Analyze the sample rows to understand the data structure and values. Generate th
         structured_docs = [d for d in relevant_docs if d["is_structured"]]
         
         if not structured_docs:
-            return {"answer": "No structured data found.", "sql": "", "data": []}
+            return {"answer": "No structured data found.", "sql": "", "data": [], "full_data": []}
         
         tables_info_parts = []
         for d in structured_docs:
             table_name = d['table_name']
-            schema = d['schema_info']
+            summary = d.get('summary', '')
             
             try:
-                sample_rows = self._execute(f"SELECT * FROM `{table_name}` LIMIT 3", fetch=True)
+                sample_rows = self._execute(f"SELECT * FROM `{table_name}` LIMIT 5", fetch=True)
                 sample_str = ""
                 if sample_rows:
-                    sample_str = "\nSample rows:\n" + "\n".join([str(row) for row in sample_rows])
+                    sample_str = "\nTop 5 Sample Rows:\n" + "\n".join([str(row) for row in sample_rows])
             except:
                 sample_str = ""
             
-            tables_info_parts.append(f"Table `{table_name}`:\nSchema: {schema}{sample_str}")
+            tables_info_parts.append(f"Table `{table_name}`:\n{summary}{sample_str}")
         
         tables_info = "\n\n".join(tables_info_parts)
         
         sql = self.generate_sql_with_llm(query, tables_info, chat_context)
         
         if not sql or sql == ";":
-            return {"answer": "Could not generate SQL query.", "sql": "", "data": []}
+            return {"answer": "Could not generate SQL query.", "sql": "", "data": [], "full_data": []}
         
         is_valid, validation_msg = self.validate_sql(sql)
         if not is_valid:
-            return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": []}
+            return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": [], "full_data": []}
         
         try:
             rows = self._execute(sql, fetch=True)
@@ -474,17 +515,17 @@ Analyze the sample rows to understand the data structure and values. Generate th
             
             llm_analysis, _ = self.llm.structured_db_retrieval(
                 query, 
-                rows[:50], 
+                rows, 
                 f"Tables: {tables_info}",
                 chat_history
             )
             
             full_answer = f"{data_section}\n\n{llm_analysis}"
             
-            return {"answer": full_answer, "sql": sql, "data": rows[:50]}
+            return {"answer": full_answer, "sql": sql, "data": rows[:50], "full_data": rows}
             
         except Exception as e:
-            return {"answer": f"Query execution error: {str(e)}", "sql": sql, "data": []}
+            return {"answer": f"Query execution error: {str(e)}", "sql": sql, "data": [], "full_data": []}
 
     def execute_unstructured_query(self, query: str, relevant_docs: List[Dict[str, Any]], 
                                     chat_context: str = "", top_k: int = 5) -> Dict[str, Any]:
@@ -561,12 +602,47 @@ Analyze the sample rows to understand the data structure and values. Generate th
         """, (session_id, user_query, final_answer, query_type, doc_used))
 
     def process_user_query(self, session_id: str, query: str) -> Dict[str, Any]:
+        from utils.web_scraper import scrape_web_content
+        
         chat_context = self.get_chat_context(session_id, limit=5)
         
         relevant_docs = self.select_relevant_documents(query, top_k=3)
         
-        if not relevant_docs:
-            answer = "No documents found in the knowledge base. Please upload documents first."
+        if not relevant_docs or (relevant_docs and max([d.get("score", 0) for d in relevant_docs]) < 0.3):
+            try:
+                web_result = scrape_web_content(query)
+                if web_result["success"]:
+                    web_context = ""
+                    if web_result["detailed_content"]:
+                        web_context = web_result["detailed_content"]
+                    elif web_result["search_results"]:
+                        web_context = "\n\n".join([
+                            f"- {r['title']}: {r['snippet']}" 
+                            for r in web_result["search_results"][:3]
+                        ])
+                    
+                    if web_context:
+                        answer_text, _ = self.llm.web_retrieval(query, web_context)
+                        final_answer = f"🌐 **Source: Web Search** (No relevant documents found in knowledge base)\n\n{answer_text}"
+                        
+                        if web_result["search_results"]:
+                            sources = "\n\n**References:**\n" + "\n".join([
+                                f"- [{r['title']}]({r['link']})" 
+                                for r in web_result["search_results"][:3]
+                            ])
+                            final_answer += sources
+                        
+                        self.save_chat(session_id, query, final_answer, "web_search", "Web")
+                        return {
+                            "answer": final_answer, 
+                            "source": "web", 
+                            "docs": [],
+                            "web_sources": web_result["search_results"][:3]
+                        }
+            except Exception as e:
+                print(f"Web scraping failed: {e}")
+            
+            answer = "No relevant documents found in the knowledge base. Please upload documents or try a different query."
             self.save_chat(session_id, query, answer, "none", "")
             return {"answer": answer, "source": "none", "docs": []}
         
@@ -581,6 +657,7 @@ Analyze the sample rows to understand the data structure and values. Generate th
                 "source": "structured",
                 "sql": result.get("sql", ""),
                 "data": result.get("data", []),
+                "full_data": result.get("full_data", []),
                 "docs": relevant_docs
             }
         
@@ -641,7 +718,7 @@ Analyze the sample rows to understand the data structure and values. Generate th
         
         tables = self._execute("""
             SELECT table_name FROM information_schema.tables 
-            WHERE table_schema = %s AND table_name LIKE 'data_%'
+            WHERE table_schema = %s AND table_name LIKE 'data_%%'
         """, (self.database,), fetch=True)
         
         if tables:
