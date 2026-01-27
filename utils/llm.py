@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List, Dict, Any, Tuple
 from groq import Groq
 
@@ -31,6 +32,58 @@ class LLMHandler:
             return content, tokens
         except Exception as e:
             return f"Error: {str(e)}", 0
+
+    def split_questions(self, text: str) -> List[str]:
+        """Split input text into multiple questions if present"""
+        if not text or not text.strip():
+            return []
+        
+        questions = []
+        
+        # First split by newlines
+        parts = text.split('\n')
+        
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            
+            # Split by question marks
+            if '?' in part:
+                sub_parts = part.split('?')
+                for sub in sub_parts:
+                    sub = sub.strip()
+                    if sub and len(sub) > 5:  # Minimum question length
+                        # Add back the question mark if it's a question
+                        if any(word in sub.lower() for word in ['what', 'where', 'when', 'who', 'why', 'how', 'is', 'are', 'can', 'do', 'does', 'show', 'get', 'find', 'list']):
+                            questions.append(sub + '?')
+                        else:
+                            questions.append(sub)
+            else:
+                # Check if it contains 'and' that separates two questions
+                if ' and ' in part.lower():
+                    # Simple heuristic: if both sides have question words, split
+                    and_parts = re.split(r'\s+and\s+', part, flags=re.IGNORECASE)
+                    if len(and_parts) == 2:
+                        left, right = and_parts
+                        left_is_q = any(word in left.lower() for word in ['what', 'where', 'when', 'who', 'why', 'how', 'show', 'get', 'find', 'list'])
+                        right_is_q = any(word in right.lower() for word in ['what', 'where', 'when', 'who', 'why', 'how', 'show', 'get', 'find', 'list'])
+                        
+                        if left_is_q and right_is_q:
+                            questions.append(left.strip())
+                            questions.append(right.strip())
+                        else:
+                            questions.append(part)
+                    else:
+                        questions.append(part)
+                else:
+                    questions.append(part)
+        
+        # If no questions found, return original text as single question
+        if not questions:
+            questions = [text.strip()]
+        
+        return questions
 
     def summarize(self, text: str, filename: str) -> Tuple[str, int]:
         system_prompt = """You are a document summarization expert. Create a concise but comprehensive summary of the provided document content. 

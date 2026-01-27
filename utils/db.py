@@ -518,7 +518,7 @@ Analyze the sample rows to understand the data structure and values. Generate th
         structured_docs = [d for d in relevant_docs if d["is_structured"]]
         
         if not structured_docs:
-            return {"answer": "No structured data found.", "sql": "", "data": [], "full_data": []}
+            return {"answer": "No structured data found.", "sql": "", "data": [], "full_data": [], "retry_attempted": False}
         
         tables_info_parts = []
         for d in structured_docs:
@@ -536,18 +536,50 @@ Analyze the sample rows to understand the data structure and values. Generate th
         
         tables_info = "\n\n".join(tables_info_parts)
         
+        # PASS 1: Normal SQL generation
         sql = self.generate_sql_with_llm(query, tables_info, chat_context)
         
         if not sql or sql == ";":
-            return {"answer": "Could not generate SQL query.", "sql": "", "data": [], "full_data": []}
+            return {"answer": "Could not generate SQL query.", "sql": "", "data": [], "full_data": [], "retry_attempted": False}
         
         is_valid, validation_msg = self.validate_sql(sql)
         if not is_valid:
-            return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": [], "full_data": []}
+            return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
         
         try:
             rows = self._execute(sql, fetch=True)
             rows = list(rows) if rows else []
+            
+            # PASS 2: If 0 rows, retry with smarter reinterpretation
+            if len(rows) == 0:
+                print(f"⚠️  Pass-1 returned 0 rows. Attempting smart reinterpretation...")
+                
+                retry_sql = self._generate_retry_sql(query, tables_info, sql, chat_context)
+                
+                if retry_sql and retry_sql != sql:
+                    is_valid_retry, _ = self.validate_sql(retry_sql)
+                    if is_valid_retry:
+                        try:
+                            rows = self._execute(retry_sql, fetch=True)
+                            rows = list(rows) if rows else []
+                            if len(rows) > 0:
+                                print(f"✅ Pass-2 successful! Found {len(rows)} rows")
+                                sql = retry_sql  # Use the retry SQL
+                            else:
+                                print(f"❌ Pass-2 also returned 0 rows")
+                        except:
+                            print(f"❌ Pass-2 SQL execution failed")
+            
+            # If still 0 rows after 2 passes, return indication for web scraping
+            if len(rows) == 0:
+                return {
+                    "answer": "", 
+                    "sql": sql, 
+                    "data": [], 
+                    "full_data": [], 
+                    "retry_attempted": True,
+                    "needs_web_fallback": True
+                }
             
             data_section = self._build_data_table(rows)
             
@@ -569,10 +601,77 @@ Analyze the sample rows to understand the data structure and values. Generate th
             
             full_answer = f"{data_section}\n\n{llm_analysis}"
             
-            return {"answer": full_answer, "sql": sql, "data": rows[:50], "full_data": rows}
+            return {"answer": full_answer, "sql": sql, "data": rows[:50], "full_data": rows, "retry_attempted": len(rows) > 0}
             
         except Exception as e:
-            return {"answer": f"Query execution error: {str(e)}", "sql": sql, "data": [], "full_data": []}
+            return {"answer": f"Query execution error: {str(e)}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
+
+    def _generate_retry_sql(self, question: str, tables_info: str, failed_sql: str, chat_context: str = "") -> str:
+        """Generate a smarter SQL query when first attempt returns 0 rows"""
+        system_prompt = """You are an expert at reinterpreting failed SQL queries. 
+The previous query returned 0 rows. Your job is to generate a NEW query with relaxed constraints and smarter interpretation.
+
+REINTERPRETATION RULES:
+1. "kids" or "children" → look for size columns with small values (size <= 7 or size in ('XS', 'S', 'M'))
+2. "top" or "best" → add ORDER BY rating DESC or ORDER BY sales DESC
+3. "costliest" or "expensive" → add ORDER BY price DESC
+4. "cheapest" or "affordable" → add ORDER BY price ASC
+5. "latest" or "new" → add ORDER BY launch_year DESC or ORDER BY created_at DESC
+6. If exact category doesn't exist, search in description or name columns using LIKE
+7. Relax exact matches to partial matches (= becomes LIKE '%value%')
+8. Remove overly restrictive WHERE conditions
+9. Check if column names in failed SQL actually exist in schema
+
+CRITICAL:
+- ALWAYS use SELECT * FROM pattern
+- Generate ONLY the SQL query, no explanation
+- Make the query more lenient, not more restrictive"""
+
+        context_section = ""
+        if chat_context:
+            context_section = f"""Previous conversation:
+{chat_context}
+
+"""
+
+        user_prompt = f"""{context_section}Tables and schema:
+{tables_info}
+
+Original question: {question}
+
+Failed SQL (returned 0 rows):
+{failed_sql}
+
+Analyze why it failed and generate a SMARTER query with:
+1. Relaxed constraints
+2. Intelligent reinterpretation of user intent
+3. Partial matches instead of exact matches
+4. Appropriate ORDER BY clauses
+
+Generate the improved SQL query:"""
+
+        response, _ = self.llm._call_llm(system_prompt, user_prompt)
+        
+        sql = response.strip()
+        if sql.startswith("```"):
+            lines = sql.split("\n")
+            sql_lines = []
+            in_code = False
+            for line in lines:
+                if line.startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code or not line.startswith("```"):
+                    sql_lines.append(line)
+            sql = "\n".join(sql_lines)
+        
+        sql = sql.strip()
+        if sql.lower().startswith("sql"):
+            sql = sql[3:].strip()
+        
+        sql = sql.rstrip(";") + ";"
+        
+        return sql
 
     def execute_unstructured_query(self, query: str, relevant_docs: List[Dict[str, Any]], 
                                     chat_context: str = "", top_k: int = 5) -> Dict[str, Any]:
@@ -649,54 +748,76 @@ Analyze the sample rows to understand the data structure and values. Generate th
         """, (session_id, user_query, final_answer, query_type, doc_used))
 
     def process_user_query(self, session_id: str, query: str) -> Dict[str, Any]:
+        """Main entry point for processing user queries with multi-question support"""
         from utils.web_scraper import scrape_web_content
         
+        # Split into multiple questions if needed
+        questions = self.llm.split_questions(query)
+        
+        if len(questions) > 1:
+            print(f"📝 Detected {len(questions)} questions")
+            # Process each question independently
+            all_answers = []
+            combined_result = {
+                "answer": "",
+                "source": "multiple",
+                "docs": [],
+                "sql": None,
+                "data": [],
+                "full_data": [],
+                "chunks": [],
+                "web_sources": []
+            }
+            
+            for i, q in enumerate(questions):
+                print(f"Processing question {i+1}/{len(questions)}: {q[:50]}...")
+                result = self._process_single_question(session_id, q, scrape_web_content)
+                all_answers.append(f"**Q{i+1}:** {q}\n\n{result['answer']}")
+                
+                # Aggregate results
+                if result.get("docs"):
+                    combined_result["docs"].extend(result["docs"])
+                if result.get("sql"):
+                    combined_result["sql"] = result["sql"]  # Keep last SQL
+                if result.get("full_data"):
+                    combined_result["full_data"].extend(result["full_data"])
+                if result.get("chunks"):
+                    combined_result["chunks"].extend(result["chunks"])
+                if result.get("web_sources"):
+                    combined_result["web_sources"].extend(result["web_sources"])
+            
+            # Combine all answers
+            combined_result["answer"] = "\n\n---\n\n".join(all_answers)
+            
+            # Save combined result
+            self.save_chat(session_id, query, combined_result["answer"], "multiple", "Multiple sources")
+            
+            return combined_result
+        else:
+            # Single question - process normally
+            return self._process_single_question(session_id, query, scrape_web_content)
+    
+    def _process_single_question(self, session_id: str, query: str, scrape_web_content) -> Dict[str, Any]:
+        """Process a single question through the pipeline"""
         chat_context = self.get_chat_context(session_id, limit=5)
         
         relevant_docs = self.select_relevant_documents(query, top_k=3)
         
+        # Check if documents are relevant enough
         if not relevant_docs or (relevant_docs and max([d.get("score", 0) for d in relevant_docs]) < 0.3):
-            try:
-                web_result = scrape_web_content(query)
-                if web_result["success"]:
-                    web_context = ""
-                    if web_result["detailed_content"]:
-                        web_context = web_result["detailed_content"]
-                    elif web_result["search_results"]:
-                        web_context = "\n\n".join([
-                            f"- {r['title']}: {r['snippet']}" 
-                            for r in web_result["search_results"][:3]
-                        ])
-                    
-                    if web_context:
-                        answer_text, _ = self.llm.web_retrieval(query, web_context)
-                        final_answer = f"🌐 **Source: Web Search** (No relevant documents found in knowledge base)\n\n{answer_text}"
-                        
-                        if web_result["search_results"]:
-                            sources = "\n\n**References:**\n" + "\n".join([
-                                f"- [{r['title']}]({r['link']})" 
-                                for r in web_result["search_results"][:3]
-                            ])
-                            final_answer += sources
-                        
-                        self.save_chat(session_id, query, final_answer, "web_search", "Web")
-                        return {
-                            "answer": final_answer, 
-                            "source": "web", 
-                            "docs": [],
-                            "web_sources": web_result["search_results"][:3]
-                        }
-            except Exception as e:
-                print(f"Web scraping failed: {e}")
-            
-            answer = "No relevant documents found in the knowledge base. Please upload documents or try a different query."
-            self.save_chat(session_id, query, answer, "none", "")
-            return {"answer": answer, "source": "none", "docs": []}
+            # No relevant docs - go straight to web
+            return self._web_search_fallback(session_id, query, scrape_web_content, "No relevant documents found")
         
         query_type = self.route_query(query, relevant_docs)
         
         if query_type == "structured":
             result = self.execute_structured_query(query, relevant_docs, chat_context)
+            
+            # Check if we need web fallback (0 rows after 2 passes)
+            if result.get("needs_web_fallback"):
+                print(f"🌐 Both SQL attempts failed. Falling back to web search...")
+                return self._web_search_fallback(session_id, query, scrape_web_content, "Database query returned no results")
+            
             doc_names = ", ".join([d["doc_name"] for d in relevant_docs if d["is_structured"]])
             self.save_chat(session_id, query, result["answer"], "structured", doc_names)
             return {
@@ -710,6 +831,12 @@ Analyze the sample rows to understand the data structure and values. Generate th
         
         elif query_type == "unstructured":
             result = self.execute_unstructured_query(query, relevant_docs, chat_context)
+            
+            # If no relevant chunks found, try web
+            if not result.get("chunks") or len(result.get("chunks", [])) == 0:
+                print(f"🌐 No relevant chunks found. Falling back to web search...")
+                return self._web_search_fallback(session_id, query, scrape_web_content, "No relevant content in documents")
+            
             doc_names = ", ".join([d["doc_name"] for d in relevant_docs if not d["is_structured"]])
             self.save_chat(session_id, query, result["answer"], "unstructured", doc_names)
             return {
@@ -720,9 +847,48 @@ Analyze the sample rows to understand the data structure and values. Generate th
             }
         
         else:
-            answer = "I couldn't determine the type of your query. Please try rephrasing."
-            self.save_chat(session_id, query, answer, "unknown", "")
-            return {"answer": answer, "source": "none", "docs": relevant_docs}
+            # Unknown query type - try web
+            return self._web_search_fallback(session_id, query, scrape_web_content, "Could not determine query type")
+    
+    def _web_search_fallback(self, session_id: str, query: str, scrape_web_content, reason: str) -> Dict[str, Any]:
+        """Fallback to web search when other methods fail"""
+        try:
+            web_result = scrape_web_content(query)
+            if web_result["success"]:
+                web_context = ""
+                if web_result["detailed_content"]:
+                    web_context = web_result["detailed_content"]
+                elif web_result["search_results"]:
+                    web_context = "\n\n".join([
+                        f"- {r['title']}: {r['snippet']}" 
+                        for r in web_result["search_results"][:3]
+                    ])
+                
+                if web_context:
+                    answer_text, _ = self.llm.web_retrieval(query, web_context)
+                    final_answer = f"🌐 **Source: Web Search** ({reason})\\n\\n{answer_text}"
+                    
+                    if web_result["search_results"]:
+                        sources = "\n\n**References:**\n" + "\n".join([
+                            f"- [{r['title']}]({r['link']})" 
+                            for r in web_result["search_results"][:3]
+                        ])
+                        final_answer += sources
+                    
+                    self.save_chat(session_id, query, final_answer, "web_search", "Web")
+                    return {
+                        "answer": final_answer, 
+                        "source": "web", 
+                        "docs": [],
+                        "web_sources": web_result["search_results"][:3]
+                    }
+        except Exception as e:
+            print(f"Web scraping failed: {e}")
+        
+        # If web also fails
+        answer = f"{reason}. Unable to find information from web search either. Please try rephrasing your question."
+        self.save_chat(session_id, query, answer, "none", "")
+        return {"answer": answer, "source": "none", "docs": []}
 
     def get_all_documents(self) -> List[Dict[str, Any]]:
         rows = self._execute("""
