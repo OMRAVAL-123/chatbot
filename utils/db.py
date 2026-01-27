@@ -437,14 +437,113 @@ class DatabaseManager:
             return "structured"
         else:
             return "none"
+    
+    def is_time_sensitive_query(self, query: str) -> bool:
+        """Check if query requires live/external data and should skip database"""
+        time_sensitive_keywords = [
+            "cricket", "match", "live", "current", "today", "score", "now",
+            "latest news", "trending", "viral", "breaking", "update",
+            "weather", "stock", "price today", "current price",
+            "happening now", "right now", "this moment", "real-time",
+            "ongoing", "in progress", "at the moment"
+        ]
+        
+        query_lower = query.lower()
+        
+        for keyword in time_sensitive_keywords:
+            if keyword in query_lower:
+                print(f"🌐 Time-sensitive keyword detected: '{keyword}' - Routing to web")
+                return True
+        
+        return False
+    
+    def check_intent_mismatch(self, query: str, rows: List[Dict[str, Any]]) -> bool:
+        """Check if returned data domain mismatches the question intent"""
+        if not rows or len(rows) == 0:
+            return False  # No data to check
+        
+        # Extract key domain terms from query
+        query_lower = query.lower()
+        
+        # Domain-specific keywords that indicate specific intent
+        domain_indicators = {
+            "cricket": ["cricket", "bat", "ball", "wicket", "run", "over", "innings"],
+            "football": ["football", "soccer", "goal", "penalty", "striker"],
+            "weather": ["weather", "temperature", "rain", "forecast", "climate"],
+            "stock": ["stock", "share", "market", "trading", "nasdaq", "dow"],
+            "news": ["news", "article", "headline", "report", "journalist"],
+            "product": ["product", "item", "price", "buy", "sell", "inventory"],
+        }
+        
+        # Check if query has strong domain intent
+        detected_domain = None
+        for domain, keywords in domain_indicators.items():
+            if any(kw in query_lower for kw in keywords):
+                detected_domain = domain
+                break
+        
+        if not detected_domain:
+            return False  # No strong domain detected, accept results
+        
+        # Check if any row data contains domain-related terms
+        row_text = " ".join([str(v).lower() for row in rows[:5] for v in row.values()])
+        
+        domain_match = any(kw in row_text for kw in domain_indicators[detected_domain])
+        
+        if not domain_match:
+            print(f"⚠️  Intent mismatch: Query about '{detected_domain}' but data doesn't match")
+            return True  # Mismatch detected
+        
+        return False  # Data matches intent
 
     def validate_sql(self, sql: str) -> Tuple[bool, str]:
+        """Validate and sanitize SQL - extract pure SQL from LLM response"""
+        if not sql or not sql.strip():
+            return False, "Empty SQL query"
+        
+        sql = sql.strip()
+        
+        # Extract SQL from code blocks if present
+        if "```" in sql:
+            lines = sql.split("\n")
+            sql_lines = []
+            in_code = False
+            for line in lines:
+                if line.strip().startswith("```"):
+                    in_code = not in_code
+                    continue
+                if in_code:
+                    sql_lines.append(line)
+            sql = "\n".join(sql_lines).strip()
+        
+        # Remove "sql" prefix if present
+        if sql.lower().startswith("sql"):
+            sql = sql[3:].strip()
+        
+        # Extract only the SQL statement - stop at first semicolon
+        if ";" in sql:
+            sql = sql.split(";")[0].strip() + ";"
+        
+        # Check if it contains natural language (multiple sentences or explanations)
+        # SQL should be a single statement, not paragraphs
+        lines = [l.strip() for l in sql.split("\n") if l.strip()]
+        
+        # If more than 5 lines or contains explanation keywords, it's likely contaminated
+        explanation_keywords = ["this query", "the above", "note that", "explanation", "because", "in order to", "we use", "i have", "here is"]
+        for line in lines:
+            line_lower = line.lower()
+            for kw in explanation_keywords:
+                if kw in line_lower and not line_lower.startswith("select"):
+                    return False, "SQL contains natural language explanation - regeneration needed"
+        
         sql_upper = sql.strip().upper()
         
+        # Must start with SELECT
         if not sql_upper.startswith("SELECT"):
             return False, "Only SELECT queries are allowed"
         
-        dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE", "GRANT", "REVOKE"]
+        # Check for dangerous keywords
+        dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE"]
         for keyword in dangerous:
             if keyword in sql_upper:
                 return False, f"Dangerous keyword '{keyword}' detected"
@@ -542,9 +641,18 @@ Analyze the sample rows to understand the data structure and values. Generate th
         if not sql or sql == ";":
             return {"answer": "Could not generate SQL query.", "sql": "", "data": [], "full_data": [], "retry_attempted": False}
         
+        # GUARD 2: SQL Sanitization - validate and regenerate if needed
         is_valid, validation_msg = self.validate_sql(sql)
         if not is_valid:
-            return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
+            if "natural language" in validation_msg.lower() or "explanation" in validation_msg.lower():
+                print(f"⚠️  SQL contains natural language. Regenerating...")
+                # Try one more time with stricter prompt
+                sql = self.generate_sql_with_llm(query, tables_info, chat_context)
+                is_valid, validation_msg = self.validate_sql(sql)
+                if not is_valid:
+                    return {"answer": f"Query rejected after retry: {validation_msg}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
+            else:
+                return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
         
         try:
             rows = self._execute(sql, fetch=True)
@@ -577,6 +685,18 @@ Analyze the sample rows to understand the data structure and values. Generate th
                     "sql": sql, 
                     "data": [], 
                     "full_data": [], 
+                    "retry_attempted": True,
+                    "needs_web_fallback": True
+                }
+            
+            # INTENT MISMATCH CHECK: Verify data domain matches query intent
+            if self.check_intent_mismatch(query, rows):
+                print(f"🌐 Data domain doesn't match query intent - routing to web")
+                return {
+                    "answer": "",
+                    "sql": sql,
+                    "data": [],
+                    "full_data": [],
                     "retry_attempted": True,
                     "needs_web_fallback": True
                 }
@@ -799,6 +919,7 @@ Generate the improved SQL query:"""
     
     def _process_single_question(self, session_id: str, query: str, scrape_web_content) -> Dict[str, Any]:
         """Process a single question through the pipeline"""
+        
         chat_context = self.get_chat_context(session_id, limit=5)
         
         relevant_docs = self.select_relevant_documents(query, top_k=3)
@@ -807,6 +928,36 @@ Generate the improved SQL query:"""
         if not relevant_docs or (relevant_docs and max([d.get("score", 0) for d in relevant_docs]) < 0.3):
             # No relevant docs - go straight to web
             return self._web_search_fallback(session_id, query, scrape_web_content, "No relevant documents found")
+        
+        # GUARD 1: LLM-based intelligent routing decision
+        # Build schema summary for LLM
+        schema_summary = ""
+        if relevant_docs:
+            schema_parts = []
+            for doc in relevant_docs[:3]:
+                if doc.get("is_structured") and doc.get("table_name"):
+                    try:
+                        # Get column info
+                        table_name = doc["table_name"]
+                        sample = self._execute(f"SELECT * FROM `{table_name}` LIMIT 1", fetch=True)
+                        if sample:
+                            columns = list(sample[0].keys())
+                            schema_parts.append(f"Table: {table_name}\nColumns: {', '.join(columns)}")
+                    except:
+                        pass
+                else:
+                    schema_parts.append(f"Document: {doc.get('doc_name', 'Unknown')}\nType: Unstructured text")
+            
+            schema_summary = "\n\n".join(schema_parts) if schema_parts else "No structured schema available"
+        
+        # Ask LLM if web scraping is needed
+        needs_web, reason = self.llm.should_use_web_scraping(query, schema_summary)
+        
+        if needs_web:
+            print(f"🌐 LLM Decision: WEB - {reason}")
+            return self._web_search_fallback(session_id, query, scrape_web_content, f"LLM routing: {reason}")
+        else:
+            print(f"💾 LLM Decision: DATABASE - {reason}")
         
         query_type = self.route_query(query, relevant_docs)
         

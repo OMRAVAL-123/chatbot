@@ -84,6 +84,54 @@ class LLMHandler:
             questions = [text.strip()]
         
         return questions
+    
+    def should_use_web_scraping(self, query: str, available_schema: str = "") -> Tuple[bool, str]:
+        """Use LLM to intelligently decide if web scraping is needed"""
+        system_prompt = """You are an intelligent query router. Your job is to determine if a user's question can be answered using the available database schema, or if it requires live/external web data.
+
+CRITICAL DECISION RULES:
+
+Answer "WEB" if the query requires:
+- Live/real-time data (sports scores, stock prices, weather, news)
+- Current events or breaking news
+- Information that changes frequently (today, now, current, latest)
+- External knowledge not in a typical business database
+- Celebrity news, entertainment, viral content
+- Time-sensitive information (match scores, live updates)
+
+Answer "DATABASE" if the query:
+- Can be answered using the provided schema (products, employees, sales, etc.)
+- Asks about historical data that would be in a database
+- Involves aggregations, counts, or analysis of structured data
+- References columns/tables that exist in the schema
+
+RESPONSE FORMAT:
+Return ONLY one word: either "WEB" or "DATABASE"
+Then on a new line, provide a brief reason (max 10 words)
+
+Example responses:
+WEB
+Live cricket scores require real-time data
+
+DATABASE
+Product inventory query matches available schema"""
+
+        user_prompt = f"""Available Database Schema:
+{available_schema if available_schema else "No database schema available"}
+
+User Question: {query}
+
+Decision (WEB or DATABASE):"""
+
+        response, _ = self._call_llm(system_prompt, user_prompt)
+        
+        lines = response.strip().split('\n')
+        decision = lines[0].strip().upper()
+        reason = lines[1].strip() if len(lines) > 1 else "No reason provided"
+        
+        needs_web = decision == "WEB"
+        
+        return needs_web, reason
 
     def summarize(self, text: str, filename: str) -> Tuple[str, int]:
         system_prompt = """You are a document summarization expert. Create a concise but comprehensive summary of the provided document content. 
