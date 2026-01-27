@@ -313,3 +313,46 @@ User Question: {query}
 Based on the above web search results, provide a comprehensive answer to the user's question."""
 
         return self._call_llm(system_prompt, user_prompt)
+
+    def optimize_search_query(self, user_query: str) -> str:
+        """Use LLM to optimize user query for web search engines"""
+        system_prompt = """You are a search query optimization expert. Your job is to transform natural language questions into effective search engine queries.
+
+OPTIMIZATION RULES:
+1. Remove filler words (show, me, tell, get, find, what, are, is, the, a, an)
+2. Focus on key terms and entities
+3. Add relevant context keywords for better results
+4. Keep it concise (3-6 words typically)
+5. Use present tense and active voice
+6. For time-sensitive queries, add temporal keywords (today, now, live, current, latest)
+
+EXAMPLES:
+- "show me currently going cricket matches" → "live cricket matches today"
+- "what is the weather like today" → "weather today"
+- "tell me latest news about AI" → "latest AI news"
+- "who won the election" → "election results latest"
+- "find me cheap flights to Paris" → "cheap flights Paris"
+
+RESPONSE FORMAT:
+Return ONLY the optimized search query, nothing else. No explanations, no quotes, just the query."""
+
+        user_prompt = f"""User Query: {user_query}
+
+Optimized Search Query:"""
+
+        try:
+            optimized_query, _ = self._call_llm(system_prompt, user_prompt)
+            optimized_query = optimized_query.strip().strip('"').strip("'")
+            
+            # Check if the response contains error messages
+            if 'error' in optimized_query.lower() or len(optimized_query) > 100:
+                print(f"⚠️ LLM returned invalid optimization, using original query")
+                return user_query
+            
+            print(f"🔧 Query optimization: '{user_query}' → '{optimized_query}'")
+            return optimized_query if optimized_query else user_query
+        except Exception as e:
+            print(f"⚠️ Query optimization failed: {e}, using original query")
+            return user_query
+
+

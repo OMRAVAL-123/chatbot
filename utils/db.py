@@ -548,6 +548,19 @@ class DatabaseManager:
             if keyword in sql_upper:
                 return False, f"Dangerous keyword '{keyword}' detected"
         
+        # Check for multiple queries (UNION, multiple SELECT, OR between queries)
+        if "UNION" in sql_upper:
+            return False, "UNION queries are not allowed"
+        
+        # Check for OR followed by SELECT (invalid pattern)
+        if re.search(r'\bOR\s+SELECT\b', sql_upper):
+            return False, "Multiple queries with OR are not allowed - use single query with AND/OR in WHERE clause"
+        
+        # Count SELECT statements - should only be 1
+        select_count = sql_upper.count("SELECT")
+        if select_count > 1:
+            return False, f"Multiple SELECT statements detected ({select_count}) - only one query allowed"
+        
         return True, "Valid"
 
     def generate_sql_with_llm(self, question: str, tables_info: str, chat_context: str = "") -> str:
@@ -557,23 +570,35 @@ CRITICAL RULES:
 1. ALWAYS use SELECT * FROM pattern - retrieve ALL columns
 2. NEVER select specific columns - always use SELECT *
 3. Use WHERE clause to filter rows based on user's question
-4. Generate ONLY the SQL query, no explanation
+4. Generate ONLY ONE SQL query - NEVER use OR between queries
 5. Use proper MySQL syntax with backticks for table and column names
 6. Handle NULL values appropriately
 7. Use LIMIT clause for large result sets (default LIMIT 100)
 8. Use previous conversation context to resolve pronouns and references
-9. ANALYZE the sample rows to understand what data is in each column
-10. If user asks for something like "office wear", check sample rows to see which column might contain that term
-11. Use LIKE '%keyword%' for text searches in appropriate columns
-12. If a category doesn't exist exactly as named, search in description or related text fields
 
-QUERY PATTERN:
-SELECT * FROM `table_name` WHERE <condition> LIMIT <number>;
+SEMANTIC UNDERSTANDING - ANALYZE COLUMN STATISTICS:
+9. Look at column statistics to understand data ranges and values
+10. "kids" or "children" or "kid wear" → Use size column with small values (size <= 7 or size IN (6,7))
+11. "adult" or "men" or "women" → Use size column with larger values (size >= 8)
+12. "top rated" or "best" → ORDER BY rating DESC
+13. "expensive" or "costliest" → ORDER BY price DESC
+14. "cheap" or "affordable" → ORDER BY price ASC
+15. "latest" or "new" → ORDER BY launch_year DESC
+16. If exact category doesn't exist, search in description or name using LIKE
+
+QUERY PATTERN (SINGLE QUERY ONLY):
+SELECT * FROM `table_name` WHERE <condition> ORDER BY <column> LIMIT <number>;
 
 EXAMPLES:
-- "Show me shoes under $50" → SELECT * FROM `products` WHERE category LIKE '%shoes%' AND price < 50 LIMIT 100;
-- "Get all employees" → SELECT * FROM `employees` LIMIT 100;
-- "Find products with 'leather'" → SELECT * FROM `products` WHERE description LIKE '%leather%' LIMIT 100;"""
+- "Show me kid shoes" → SELECT * FROM `products` WHERE size <= 7 ORDER BY rating DESC LIMIT 100;
+- "Top rated kids wear" → SELECT * FROM `products` WHERE size <= 7 ORDER BY rating DESC LIMIT 100;
+- "Expensive adult shoes" → SELECT * FROM `products` WHERE size >= 8 ORDER BY price DESC LIMIT 100;
+- "Latest products" → SELECT * FROM `products` ORDER BY launch_year DESC LIMIT 100;
+
+FORBIDDEN:
+- DO NOT generate multiple queries separated by OR
+- DO NOT include explanations or comments
+- DO NOT use UNION or multiple SELECT statements"""
 
         context_section = ""
         if chat_context:
@@ -732,20 +757,23 @@ Analyze the sample rows to understand the data structure and values. Generate th
 The previous query returned 0 rows. Your job is to generate a NEW query with relaxed constraints and smarter interpretation.
 
 REINTERPRETATION RULES:
-1. "kids" or "children" → look for size columns with small values (size <= 7 or size in ('XS', 'S', 'M'))
-2. "top" or "best" → add ORDER BY rating DESC or ORDER BY sales DESC
-3. "costliest" or "expensive" → add ORDER BY price DESC
-4. "cheapest" or "affordable" → add ORDER BY price ASC
-5. "latest" or "new" → add ORDER BY launch_year DESC or ORDER BY created_at DESC
-6. If exact category doesn't exist, search in description or name columns using LIKE
-7. Relax exact matches to partial matches (= becomes LIKE '%value%')
-8. Remove overly restrictive WHERE conditions
-9. Check if column names in failed SQL actually exist in schema
+1. "kids" or "children" or "kid wear" → Use size column with small values (size <= 7 or size IN (6,7))
+2. "adult" or "men" or "women" → Use size column with larger values (size >= 8)
+3. "top" or "best" or "top rated" → add ORDER BY rating DESC
+4. "costliest" or "expensive" → add ORDER BY price DESC
+5. "cheapest" or "affordable" → add ORDER BY price ASC
+6. "latest" or "new" → add ORDER BY launch_year DESC or ORDER BY created_at DESC
+7. If exact category doesn't exist, search in description or name columns using LIKE
+8. Relax exact matches to partial matches (= becomes LIKE '%value%')
+9. Remove overly restrictive WHERE conditions
+10. Check if column names in failed SQL actually exist in schema
 
 CRITICAL:
 - ALWAYS use SELECT * FROM pattern
-- Generate ONLY the SQL query, no explanation
-- Make the query more lenient, not more restrictive"""
+- Generate ONLY ONE SQL query - no explanations, no OR between queries
+- Make the query more lenient, not more restrictive
+- DO NOT generate multiple queries separated by OR
+- DO NOT use UNION or multiple SELECT statements"""
 
         context_section = ""
         if chat_context:
@@ -762,7 +790,7 @@ Original question: {question}
 Failed SQL (returned 0 rows):
 {failed_sql}
 
-Analyze why it failed and generate a SMARTER query with:
+Analyze why it failed and generate a SMARTER SINGLE query with:
 1. Relaxed constraints
 2. Intelligent reinterpretation of user intent
 3. Partial matches instead of exact matches
@@ -1004,40 +1032,60 @@ Generate the improved SQL query:"""
     def _web_search_fallback(self, session_id: str, query: str, scrape_web_content, reason: str) -> Dict[str, Any]:
         """Fallback to web search when other methods fail"""
         try:
-            web_result = scrape_web_content(query)
-            if web_result["success"]:
+            print(f"🌐 Attempting web search for: {query}")
+            web_result = scrape_web_content(query, llm=self.llm)
+            
+            print(f"🔍 Web result success: {web_result.get('success', False)}")
+            print(f"🔍 Search results count: {len(web_result.get('search_results', []))}")
+            print(f"🔍 Detailed content length: {len(web_result.get('detailed_content', ''))}")
+            
+            if web_result.get("error"):
+                print(f"❌ Web scraping error: {web_result['error']}")
+            
+            if web_result.get("success"):
                 web_context = ""
-                if web_result["detailed_content"]:
+                if web_result.get("detailed_content"):
                     web_context = web_result["detailed_content"]
-                elif web_result["search_results"]:
+                    print(f"✅ Using detailed content ({len(web_context)} chars)")
+                elif web_result.get("search_results"):
                     web_context = "\n\n".join([
-                        f"- {r['title']}: {r['snippet']}" 
+                        f"- {r.get('title', 'No title')}: {r.get('snippet', 'No snippet')}" 
                         for r in web_result["search_results"][:3]
                     ])
+                    print(f"✅ Using search snippets ({len(web_context)} chars)")
                 
-                if web_context:
+                if web_context and len(web_context.strip()) > 10:
+                    print(f"🤖 Generating answer from web content...")
                     answer_text, _ = self.llm.web_retrieval(query, web_context)
-                    final_answer = f"🌐 **Source: Web Search** ({reason})\\n\\n{answer_text}"
+                    final_answer = f"🌐 **Source: Web Search** ({reason})\n\n{answer_text}"
                     
-                    if web_result["search_results"]:
+                    if web_result.get("search_results"):
                         sources = "\n\n**References:**\n" + "\n".join([
-                            f"- [{r['title']}]({r['link']})" 
+                            f"- [{r.get('title', 'Source')}]({r.get('link', '#')})" 
                             for r in web_result["search_results"][:3]
                         ])
                         final_answer += sources
                     
                     self.save_chat(session_id, query, final_answer, "web_search", "Web")
+                    print(f"✅ Web search successful!")
                     return {
                         "answer": final_answer, 
                         "source": "web", 
                         "docs": [],
-                        "web_sources": web_result["search_results"][:3]
+                        "web_sources": web_result.get("search_results", [])[:3]
                     }
+                else:
+                    print(f"⚠️ Web context is empty or too short")
+            else:
+                print(f"❌ Web search returned success=False")
+                
         except Exception as e:
-            print(f"Web scraping failed: {e}")
+            print(f"❌ Web scraping exception: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
         
         # If web also fails
-        answer = f"{reason}. Unable to find information from web search either. Please try rephrasing your question."
+        answer = f"🔍 **{reason}**\n\nI attempted to search the web for this information, but encountered an issue. This could be due to:\n- Network connectivity\n- Rate limiting from search services\n- No relevant results found\n\nPlease try:\n1. Rephrasing your question\n2. Being more specific\n3. Trying again in a moment"
         self.save_chat(session_id, query, answer, "none", "")
         return {"answer": answer, "source": "none", "docs": []}
 

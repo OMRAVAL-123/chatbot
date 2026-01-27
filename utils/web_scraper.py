@@ -1,17 +1,18 @@
 import requests
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 import re
 
 
 class WebScraper:
-    def __init__(self):
+    def __init__(self, llm=None):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
         }
         self.current_keywords = ['today', 'now', 'current', 'live', 'latest', 'update', 'score', 'match', 'news', 'trending', 'viral']
+        self.llm = llm
     
     def is_current_event_query(self, query):
         query_lower = query.lower()
@@ -19,8 +20,16 @@ class WebScraper:
     
     def search_news(self, query):
         try:
+            # Optimize query using LLM if available
+            search_query = query
+            if self.llm:
+                search_query = self.llm.optimize_search_query(query)
+            
+            print(f"🔍 Searching news for: {search_query}")
             with DDGS() as ddgs:
-                results = list(ddgs.news(query, region="in-en", max_results=10))
+                results = list(ddgs.news(search_query, region="in-en", max_results=10))
+            
+            print(f"📰 Found {len(results)} news results")
             
             formatted_results = []
             for r in results:
@@ -34,12 +43,22 @@ class WebScraper:
             return {"success": True, "results": formatted_results, "error": None}
         
         except Exception as e:
-            return {"success": False, "results": [], "error": f"News search error: {str(e)}"}
+            error_msg = f"News search error: {type(e).__name__}: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {"success": False, "results": [], "error": error_msg}
     
     def search_text(self, query):
         try:
+            # Optimize query using LLM if available
+            search_query = query
+            if self.llm:
+                search_query = self.llm.optimize_search_query(query)
+            
+            print(f"🔍 Searching web for: {search_query}")
             with DDGS() as ddgs:
-                results = list(ddgs.text(query, region="in-en", timelimit="w", max_results=10))
+                results = list(ddgs.text(search_query, region="in-en", timelimit="w", max_results=10))
+            
+            print(f"🌐 Found {len(results)} web results")
             
             formatted_results = []
             for r in results:
@@ -52,7 +71,9 @@ class WebScraper:
             return {"success": True, "results": formatted_results, "error": None}
         
         except Exception as e:
-            return {"success": False, "results": [], "error": f"Search error: {str(e)}"}
+            error_msg = f"Search error: {type(e).__name__}: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {"success": False, "results": [], "error": error_msg}
     
     def search(self, query):
         if self.is_current_event_query(query):
@@ -103,8 +124,8 @@ class WebScraper:
             return {"success": False, "title": "", "content": "", "error": str(e)}
 
 
-def scrape_web_content(query):
-    scraper = WebScraper()
+def scrape_web_content(query, llm=None):
+    scraper = WebScraper(llm=llm)
     search_results = scraper.search(query)
     
     if search_results["success"] and search_results["results"]:
