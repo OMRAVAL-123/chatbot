@@ -301,44 +301,83 @@ class DatabaseManager:
         }
 
     def ingest_unstructured_data(self, chunks: List[Dict[str, Any]], filename: str) -> Dict[str, Any]:
+        """Ingest unstructured document chunks with robust error handling"""
         if not chunks:
             return {"doc_name": filename, "chunks": 0}
         
-        full_text = " ".join([c.get("text", "")[:500] for c in chunks[:10]])
-        summary_text, _ = self.llm.summarize(full_text, filename)
-        summary_embedding = self.embedding_gen.generate_embedding(summary_text)
-        summary_blob = pickle.dumps(summary_embedding)
-        
-        self._execute("""
-            INSERT INTO docs_summary (doc_name, doc_type, is_structured, summary_text, summary_embedding)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (filename, "UNSTRUCTURED", False, summary_text, summary_blob))
-        
-        doc_id_result = self._execute("SELECT LAST_INSERT_ID() as doc_id", fetch=True)
-        doc_id = doc_id_result[0]["doc_id"] if doc_id_result else 0
-        
-        texts = [c.get("text", "") for c in chunks]
-        embeddings = self.embedding_gen.generate_embeddings(texts)
-        
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            embedding_blob = pickle.dumps(embedding)
+        try:
+            print(f"📝 Ingesting {len(chunks)} chunks for {filename}")
+            
+            # Generate summary from all chunks
+            all_texts = [c.get("text", "") for c in chunks if c.get("text", "").strip()]
+            if all_texts:
+                full_text = " ".join([t[:300] for t in all_texts[:20]])
+            else:
+                full_text = filename
+            
+            summary_text, _ = self.llm.summarize(full_text, filename)
+            summary_embedding = self.embedding_gen.generate_embedding(summary_text)
+            summary_blob = pickle.dumps(summary_embedding)
+            
             self._execute("""
-                INSERT INTO unstructured_docs (doc_id, doc_name, chunk_text, chunk_embedding, page_no, chunk_index)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (
-                doc_id,
-                filename,
-                chunk.get("text", ""),
-                embedding_blob,
-                chunk.get("page_num", 1),
-                i
-            ))
-        
-        return {
-            "doc_name": filename,
-            "doc_id": doc_id,
-            "chunks": len(chunks)
-        }
+                INSERT INTO docs_summary (doc_name, doc_type, is_structured, summary_text, summary_embedding)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (filename, "UNSTRUCTURED", False, summary_text, summary_blob))
+            
+            # Get the inserted doc_id
+            doc_id_result = self._execute("SELECT LAST_INSERT_ID() as doc_id", fetch=True)
+            doc_id = doc_id_result[0]["doc_id"] if doc_id_result else None
+            
+            if not doc_id:
+                # Fallback: query the database
+                recent = self._execute("SELECT doc_id FROM docs_summary WHERE doc_name = %s ORDER BY created_at DESC LIMIT 1", 
+                                      (filename,), fetch=True)
+                doc_id = recent[0]["doc_id"] if recent else 0
+            
+            print(f"📌 Document ID: {doc_id}")
+            
+            # Generate embeddings for all chunks
+            texts = [c.get("text", "") for c in chunks]
+            embeddings = self.embedding_gen.generate_embeddings(texts)
+            
+            # Ensure we have embeddings for all chunks
+            if len(embeddings) != len(chunks):
+                print(f"⚠️  Generated {len(embeddings)} embeddings for {len(chunks)} chunks")
+                while len(embeddings) < len(chunks):
+                    embeddings.append(np.zeros(768))
+            
+            # Batch insert chunks
+            inserted_count = 0
+            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+                try:
+                    if embedding is None or (isinstance(embedding, np.ndarray) and embedding.size == 0):
+                        embedding = np.zeros(768)
+                    embedding_blob = pickle.dumps(embedding)
+                    self._execute("""
+                        INSERT INTO unstructured_docs (doc_id, doc_name, chunk_text, chunk_embedding, page_no, chunk_index)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        doc_id,
+                        filename,
+                        chunk.get("text", "")[:5000],
+                        embedding_blob,
+                        chunk.get("page_num", 1),
+                        i
+                    ))
+                    inserted_count += 1
+                except Exception as e:
+                    print(f"❌ Error inserting chunk {i}: {str(e)}")
+                    continue
+            
+            print(f"✅ Inserted {inserted_count}/{len(chunks)} chunks")
+            return {
+                "doc_name": filename,
+                "doc_id": doc_id,
+                "chunks": inserted_count
+            }
+        except Exception as e:
+            print(f"❌ Error in ingest_unstructured_data: {str(e)}")
+            raise
 
     def select_relevant_documents(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         query_embedding = self.embedding_gen.generate_query_embedding(query)
@@ -415,18 +454,27 @@ class DatabaseManager:
     def generate_sql_with_llm(self, question: str, tables_info: str, chat_context: str = "") -> str:
         system_prompt = """You are an expert MySQL query generator. Given a user question, table schema, and sample rows, generate a valid MySQL SELECT query.
 
-RULES:
-1. Generate ONLY the SQL query, no explanation
-2. Use only SELECT statements
-3. Use proper MySQL syntax
-4. Use backticks for table and column names
-5. Handle NULL values appropriately
-6. Use LIMIT for large result sets
-7. Use previous conversation context to resolve pronouns and references
-8. ANALYZE the sample rows to understand what data is in each column
-9. If user asks for something like "office wear", check sample rows to see which column might contain that term (e.g., description, category, sub_category)
-10. Use LIKE '%keyword%' for text searches in appropriate columns
-11. If a category doesn't exist exactly as named, search in description or related text fields"""
+CRITICAL RULES:
+1. ALWAYS use SELECT * FROM pattern - retrieve ALL columns
+2. NEVER select specific columns - always use SELECT *
+3. Use WHERE clause to filter rows based on user's question
+4. Generate ONLY the SQL query, no explanation
+5. Use proper MySQL syntax with backticks for table and column names
+6. Handle NULL values appropriately
+7. Use LIMIT clause for large result sets (default LIMIT 100)
+8. Use previous conversation context to resolve pronouns and references
+9. ANALYZE the sample rows to understand what data is in each column
+10. If user asks for something like "office wear", check sample rows to see which column might contain that term
+11. Use LIKE '%keyword%' for text searches in appropriate columns
+12. If a category doesn't exist exactly as named, search in description or related text fields
+
+QUERY PATTERN:
+SELECT * FROM `table_name` WHERE <condition> LIMIT <number>;
+
+EXAMPLES:
+- "Show me shoes under $50" → SELECT * FROM `products` WHERE category LIKE '%shoes%' AND price < 50 LIMIT 100;
+- "Get all employees" → SELECT * FROM `employees` LIMIT 100;
+- "Find products with 'leather'" → SELECT * FROM `products` WHERE description LIKE '%leather%' LIMIT 100;"""
 
         context_section = ""
         if chat_context:
@@ -440,7 +488,7 @@ RULES:
 
 User question: {question}
 
-Analyze the sample rows to understand the data structure and values. Generate the SQL query:"""
+Analyze the sample rows to understand the data structure and values. Generate the SQL query using SELECT * pattern:"""
 
         response, _ = self.llm._call_llm(system_prompt, user_prompt)
         
@@ -476,7 +524,6 @@ Analyze the sample rows to understand the data structure and values. Generate th
         for d in structured_docs:
             table_name = d['table_name']
             summary = d.get('summary', '')
-            
             try:
                 sample_rows = self._execute(f"SELECT * FROM `{table_name}` LIMIT 5", fetch=True)
                 sample_str = ""

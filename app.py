@@ -28,21 +28,21 @@ st.markdown("""
     }
     
     .stApp {
-        background: #000000 !important;
+        background: #ffe4e9 !important;
     }
     
     [data-testid="stAppViewContainer"] {
-        background: #000000 !important;
+        background: #ffe4e9 !important;
     }
     
     [data-testid="stHeader"] {
-        background: #000000 !important;
+        background: #fff0f3 !important;
     }
     
     .main-header {
         text-align: center;
         padding: 2rem 0;
-        background: linear-gradient(90deg, #FFD700 0%, #FF4500 50%, #00FF00 100%);
+        background: linear-gradient(90deg, #be185d 0%, #ec4899 50%, #f472b6 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
@@ -59,20 +59,20 @@ st.markdown("""
     }
     
     .user-message {
-        background: linear-gradient(135deg, #FF4500 0%, #FF6347 100%);
+        background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%);
         color: white;
         margin-left: 20%;
         border-radius: 20px 20px 5px 20px;
-        box-shadow: 0 8px 32px rgba(255, 69, 0, 0.3);
+        box-shadow: 0 8px 32px rgba(236, 72, 153, 0.3);
     }
     
     .assistant-message {
-        background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
-        color: #00FF00;
+        background: #ffffff;
+        color: #000000;
         margin-right: 10%;
         border-radius: 20px 20px 20px 5px;
-        border: 1px solid #00FF00;
-        box-shadow: 0 8px 32px rgba(0, 255, 0, 0.2);
+        border: 1px solid #fda4af;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     }
     
     @keyframes slideIn {
@@ -83,15 +83,15 @@ st.markdown("""
     .sidebar-header {
         font-size: 1.2rem;
         font-weight: 600;
-        color: #FFD700;
+        color: #be185d;
         padding: 0.5rem 0;
-        border-bottom: 2px solid #FFD700;
+        border-bottom: 2px solid #ec4899;
         margin-bottom: 1rem;
     }
     
     .doc-card {
-        background: rgba(255, 215, 0, 0.1);
-        border: 1px solid #FFD700;
+        background: #ffffff;
+        border: 1px solid #fda4af;
         border-radius: 12px;
         padding: 1rem;
         margin: 0.5rem 0;
@@ -99,14 +99,14 @@ st.markdown("""
     }
     
     .doc-card:hover {
-        background: rgba(255, 215, 0, 0.2);
+        background: #fff0f3;
         transform: translateY(-2px);
-        box-shadow: 0 4px 20px rgba(255, 215, 0, 0.2);
+        box-shadow: 0 4px 20px rgba(236, 72, 153, 0.2);
     }
     
     .structured-badge {
-        background: #00FF00;
-        color: black;
+        background: #10b981;
+        color: white;
         padding: 4px 12px;
         border-radius: 12px;
         font-size: 0.75rem;
@@ -114,8 +114,8 @@ st.markdown("""
     }
     
     .unstructured-badge {
-        background: #FFD700;
-        color: black;
+        background: #f59e0b;
+        color: white;
         padding: 4px 12px;
         border-radius: 12px;
         font-size: 0.75rem;
@@ -123,27 +123,27 @@ st.markdown("""
     }
     
     .routing-info {
-        background: rgba(0, 255, 0, 0.1);
-        color: #00FF00;
+        background: #fce7f3;
+        color: #9f1239;
         padding: 0.75rem 1.25rem;
         border-radius: 12px;
-        border: 1px solid #00FF00;
+        border: 1px solid #ec4899;
         font-size: 0.9rem;
         margin: 1rem 0;
     }
     
     .sql-box {
-        background: #0a0a0a;
-        color: #00FF00;
+        background: #1f2937;
+        color: #10b981;
         padding: 1.2rem;
         border-radius: 12px;
-        border: 1px solid #FFD700;
+        border: 1px solid #374151;
         font-family: 'Courier New', monospace;
         overflow-x: auto;
     }
     
     .stButton > button {
-        background: linear-gradient(135deg, #FF4500 0%, #FF6347 100%) !important;
+        background: linear-gradient(135deg, #ec4899 0%, #f472b6 100%) !important;
         color: white !important;
         border: none !important;
         border-radius: 25px !important;
@@ -151,169 +151,179 @@ st.markdown("""
         font-weight: 600 !important;
         font-size: 1rem !important;
         transition: all 0.3s ease !important;
-        box-shadow: 0 4px 20px rgba(255, 69, 0, 0.4) !important;
+        box-shadow: 0 4px 20px rgba(236, 72, 153, 0.4) !important;
     }
     
     .stButton > button:hover {
         transform: translateY(-2px) !important;
-        box-shadow: 0 8px 30px rgba(255, 69, 0, 0.6) !important;
+        box-shadow: 0 8px 30px rgba(236, 72, 153, 0.6) !important;
     }
     
     .delete-warning {
-        background: linear-gradient(135deg, #FF4500 0%, #FF6347 100%);
-        color: white;
+        background: #fee2e2;
+        color: #991b1b;
         padding: 1.2rem;
         border-radius: 12px;
         margin: 1rem 0;
-        border-left: 5px solid #FFD700;
+        border-left: 5px solid #dc2626;
     }
     
     .stats-card {
-        background: linear-gradient(135deg, rgba(255, 215, 0, 0.1) 0%, rgba(0, 255, 0, 0.1) 100%);
-        border: 1px solid #FFD700;
+        background: #ffffff;
+        border: 1px solid #fda4af;
         padding: 1.2rem;
         border-radius: 12px;
         text-align: center;
-        color: #FFD700;
+        color: #000000;
     }
     
     [data-testid="stSidebar"] {
-        background: #0a0a0a !important;
-        border-right: 1px solid #FFD700 !important;
+        background: #fff0f3 !important;
+        border-right: 1px solid #fda4af !important;
     }
     
     [data-testid="stSidebar"] h1, 
     [data-testid="stSidebar"] h2, 
     [data-testid="stSidebar"] h3 {
-        color: #FFD700 !important;
+        color: #be185d !important;
     }
     
     [data-testid="stSidebar"] p, 
     [data-testid="stSidebar"] span, 
     [data-testid="stSidebar"] label,
     [data-testid="stSidebar"] .stMarkdown {
-        color: #00FF00 !important;
+        color: #000000 !important;
     }
     
     [data-testid="stSidebar"] .stButton > button {
-        background: linear-gradient(135deg, #00FF00 0%, #32CD32 100%) !important;
-        color: black !important;
+        background: linear-gradient(135deg, #10b981 0%, #34d399 100%) !important;
+        color: white !important;
     }
     
     .stTextInput > div > div > input {
-        background: #1a1a1a !important;
-        border: 2px solid #FFD700 !important;
+        background: #ffffff !important;
+        border: 2px solid #fda4af !important;
         border-radius: 25px !important;
-        color: #FFD700 !important;
+        color: #000000 !important;
         padding: 1rem 1.5rem !important;
         font-size: 1rem !important;
         transition: all 0.3s ease !important;
     }
     
     .stTextInput > div > div > input:focus {
-        border-color: #00FF00 !important;
-        box-shadow: 0 0 20px rgba(0, 255, 0, 0.4) !important;
+        border-color: #ec4899 !important;
+        box-shadow: 0 0 20px rgba(236, 72, 153, 0.3) !important;
     }
     
     .stTextInput > div > div > input::placeholder {
-        color: #888 !important;
+        color: #9ca3af !important;
     }
     
     .stFileUploader > div {
-        background: rgba(255, 215, 0, 0.1) !important;
-        border: 2px dashed #FFD700 !important;
+        background: #ffffff !important;
+        border: 2px dashed #fda4af !important;
         border-radius: 12px !important;
     }
     
     .stFileUploader label {
-        color: #FFD700 !important;
+        color: #000000 !important;
     }
     
     .stExpander {
-        background: rgba(0, 255, 0, 0.05) !important;
-        border: 1px solid #00FF00 !important;
+        background: #ffffff !important;
+        border: 1px solid #fda4af !important;
         border-radius: 12px !important;
     }
     
     .stExpander summary {
-        color: #FFD700 !important;
+        color: #be185d !important;
         font-weight: 600 !important;
     }
     
     .stMarkdown, p, span, div {
-        color: #00FF00 !important;
+        color: #000000 !important;
     }
     
     h1, h2, h3, h4, h5, h6 {
-        color: #FFD700 !important;
+        color: #be185d !important;
     }
     
     .stMetric {
-        background: rgba(255, 215, 0, 0.1) !important;
+        background: #ffffff !important;
         padding: 1rem !important;
         border-radius: 12px !important;
-        border: 1px solid #FFD700 !important;
+        border: 1px solid #fda4af !important;
     }
     
     .stMetric label {
-        color: #FFD700 !important;
+        color: #000000 !important;
     }
     
     .stMetric [data-testid="stMetricValue"] {
-        color: #00FF00 !important;
+        color: #be185d !important;
         font-size: 2rem !important;
         font-weight: 700 !important;
     }
     
     .stAlert {
-        background: rgba(255, 215, 0, 0.1) !important;
-        border: 1px solid #FFD700 !important;
-        color: #FFD700 !important;
+        background: #fef3c7 !important;
+        border: 1px solid #f59e0b !important;
+        color: #92400e !important;
     }
     
     .stSuccess {
-        background: rgba(0, 255, 0, 0.1) !important;
-        border: 1px solid #00FF00 !important;
-        color: #00FF00 !important;
+        background: #d1fae5 !important;
+        border: 1px solid #10b981 !important;
+        color: #065f46 !important;
     }
     
     .stError {
-        background: rgba(255, 69, 0, 0.1) !important;
-        border: 1px solid #FF4500 !important;
-        color: #FF4500 !important;
+        background: #fee2e2 !important;
+        border: 1px solid #ef4444 !important;
+        color: #991b1b !important;
     }
     
     .stWarning {
-        background: rgba(255, 215, 0, 0.1) !important;
-        border: 1px solid #FFD700 !important;
-        color: #FFD700 !important;
+        background: #fef3c7 !important;
+        border: 1px solid #f59e0b !important;
+        color: #92400e !important;
     }
     
     .stInfo {
-        background: rgba(0, 255, 0, 0.1) !important;
-        border: 1px solid #00FF00 !important;
-        color: #00FF00 !important;
+        background: #fce7f3 !important;
+        border: 1px solid #ec4899 !important;
+        color: #9f1239 !important;
     }
     
     .stDataFrame {
-        background: #0a0a0a !important;
-        border: 1px solid #FFD700 !important;
+        background: #ffffff !important;
+        border: 1px solid #fda4af !important;
         border-radius: 12px !important;
     }
     
     hr {
         border: none !important;
         height: 1px !important;
-        background: linear-gradient(90deg, transparent, #FFD700, transparent) !important;
+        background: linear-gradient(90deg, transparent, #fda4af, transparent) !important;
         margin: 2rem 0 !important;
     }
     
     .stSpinner > div {
-        border-top-color: #00FF00 !important;
+        border-top-color: #ec4899 !important;
     }
     
     .stProgress > div > div {
-        background: #00FF00 !important;
+        background: #ec4899 !important;
+    }
+    
+    a {
+        color: #be185d !important;
+        text-decoration: none !important;
+    }
+    
+    a:hover {
+        color: #9f1239 !important;
+        text-decoration: underline !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -557,26 +567,27 @@ elif st.session_state.active_tab == "chat":
                 </div>
                 """, unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([5, 1, 1])
+    col1, col2 = st.columns([6, 1])
     
     with col1:
         user_input = st.text_input(
             "Ask about your documents...",
             key="user_input",
-            placeholder="Type your question or click 🎤 to speak..."
+            placeholder="Type your question or record audio below..."
         )
     
     with col2:
-        record_button = st.button("🎤 Record", use_container_width=True)
-    
-    with col3:
         send = st.button("Send", use_container_width=True)
+    
+    # Audio input widget
+    audio_file = st.audio_input("🎤 Record your question")
     
     final_query = None
     
-    if record_button:
-        with st.spinner("🎤 Listening... Speak now!"):
-            result = st.session_state.audio_handler.transcribe_from_microphone(timeout=10, phrase_time_limit=30)
+    # Handle audio input
+    if audio_file is not None:
+        with st.spinner("🎤 Transcribing audio..."):
+            result = st.session_state.audio_handler.transcribe_audio_file(audio_file)
             if result["success"]:
                 final_query = result["text"]
                 st.success(f"✅ Transcribed: {final_query}")
@@ -584,12 +595,15 @@ elif st.session_state.active_tab == "chat":
             else:
                 st.error(f"❌ {result['error']}")
     
+    # Use transcription if no text input
     if hasattr(st.session_state, 'last_transcription') and st.session_state.last_transcription and not user_input:
         user_input = st.session_state.last_transcription
     
+    # Use text input if provided
     if user_input:
         final_query = user_input
     
+    # Process query when send button is clicked
     if send and final_query:
         if hasattr(st.session_state, 'last_transcription'):
             del st.session_state.last_transcription

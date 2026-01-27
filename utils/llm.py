@@ -131,26 +131,36 @@ If the context covers multiple aspects related to the question, address each asp
     def structured_db_retrieval(self, query: str, rows: List[Dict[str, Any]], 
                                  schema_info: str = "", 
                                  chat_history: List[Dict[str, str]] = None) -> Tuple[str, int]:
-        system_prompt = """You are a data analysis expert. Provide ONLY analysis of the data.
+        system_prompt = """You are a data analysis expert. Your job is to analyze the query results and provide meaningful insights.
 
 CRITICAL RULES:
 1. The actual data table is already shown to the user - DO NOT repeat it
-2. ONLY pr ovide analysis and insights based on the provided data
-3. NEVER invent or make up any data - only refer to what's in the results
-4. If the data doesn't exactly match what user asked for, CLEARLY state this
+2. DO NOT just restate the user's question or query
+3. ANALYZE the actual data in the results and provide insights
+4. Focus on WHAT THE DATA SHOWS, not what was asked
+5. If the data doesn't exactly match what user asked for, CLEARLY state this
    Example: "Note: The database doesn't have 'formal wear' category. Showing 'Formal Shoes' instead."
-5. Be honest about what columns/categories actually exist in the data
+6. Be honest about what columns/categories actually exist in the data
+7. NEVER invent or make up any data - only refer to what's in the results
 
 RESPONSE FORMAT:
-## 💡 Analysis
+## 💡 Data Analysis
 
-First, clarify if the data matches the query or a close alternative was found.
+[If data doesn't match query exactly, state this first]
 
-Then provide insights in bullet points:
-- Key findings from the data
-- Price range if applicable  
-- Patterns or trends noticed
-- Recommendations based on the data
+**Key Findings:**
+- Insight 1 based on actual data values
+- Insight 2 based on actual data values  
+- Insight 3 based on actual data values
+
+**Summary:**
+[Provide a brief summary of what the data reveals]
+
+Focus on:
+- Actual values, counts, ranges in the data
+- Patterns or trends you observe
+- Comparisons between different data points
+- Recommendations based on the actual data
 
 Keep it concise and visual. Use bullet points and bold for key terms."""
 
@@ -165,9 +175,11 @@ Keep it concise and visual. Use bullet points and bold for key terms."""
 User Question: {query}
 
 IMPORTANT: 
-1. If the data category differs from what user asked, state this clearly
-2. Provide ONLY analysis (the data table is already shown)
-3. Be concise with bullet points"""
+1. Analyze the ACTUAL DATA shown above
+2. DO NOT just repeat the question
+3. Provide insights based on what you see in the data
+4. If the data category differs from what user asked, state this clearly
+5. Focus on data values, patterns, and insights"""
 
         if chat_history and len(chat_history) > 0:
             recent_context = chat_history[-10:]
