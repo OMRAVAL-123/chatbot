@@ -94,16 +94,28 @@ CRITICAL DECISION RULES:
 Answer "WEB" if the query requires:
 - Live/real-time data (sports scores, stock prices, weather, news)
 - Current events or breaking news
-- Information that changes frequently (today, now, current, latest)
+- Information that changes frequently (today, now, current, latest, ongoing, currently)
 - External knowledge not in a typical business database
 - Celebrity news, entertainment, viral content
 - Time-sensitive information (match scores, live updates)
+- Sports matches, games, tournaments happening NOW
+- Keywords: "currently", "going on", "live", "happening now", "today's", "right now"
 
 Answer "DATABASE" if the query:
 - Can be answered using the provided schema (products, employees, sales, etc.)
 - Asks about historical data that would be in a database
 - Involves aggregations, counts, or analysis of structured data
 - References columns/tables that exist in the schema
+- Asks about inventory, ratings, prices, categories in the database
+
+SPECIFIC EXAMPLES:
+
+"show me currently going cricket matches" → WEB (live sports data)
+"what is top rated formal wear" → DATABASE (product ratings in schema)
+"today's cricket score" → WEB (live data)
+"best selling products" → DATABASE (sales data)
+"current weather" → WEB (real-time data)
+"expensive shoes" → DATABASE (product price data)
 
 RESPONSE FORMAT:
 Return ONLY one word: either "WEB" or "DATABASE"
@@ -316,6 +328,9 @@ Based on the above web search results, provide a comprehensive answer to the use
 
     def optimize_search_query(self, user_query: str) -> str:
         """Use LLM to optimize user query for web search engines"""
+        if not user_query or not user_query.strip():
+            return user_query or ""
+        
         system_prompt = """You are a search query optimization expert. Your job is to transform natural language questions into effective search engine queries.
 
 OPTIMIZATION RULES:

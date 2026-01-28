@@ -32,14 +32,30 @@ class DatabaseManager:
         if not self.ssl_ca_content:
             return
 
-        cert_content = self.ssl_ca_content.replace("\\n", "\n")
-        self.ssl_ca_path = "/tmp/aiven_ca.pem"
+        # Check if ssl_ca_content is a file path or actual certificate content
+        if os.path.exists(self.ssl_ca_content):
+            # It's a file path - use it directly
+            self.ssl_ca_path = self.ssl_ca_content
+            print(f"✅ Using SSL certificate from: {self.ssl_ca_path}")
+        else:
+            # It's certificate content - write to temp file
+            cert_content = self.ssl_ca_content.replace("\\n", "\n")
+            
+            # Use platform-appropriate temp directory
+            if os.name == 'nt':  # Windows
+                temp_dir = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'chatbot')
+                os.makedirs(temp_dir, exist_ok=True)
+                self.ssl_ca_path = os.path.join(temp_dir, "aiven_ca.pem")
+            else:  # Linux/Docker
+                self.ssl_ca_path = "/tmp/aiven_ca.pem"
 
-        with open(self.ssl_ca_path, "w") as f:
-            f.write(cert_content)
+            with open(self.ssl_ca_path, "w") as f:
+                f.write(cert_content)
 
-        if not os.path.exists(self.ssl_ca_path):
-            raise RuntimeError("SSL CA certificate file was not created")
+            if not os.path.exists(self.ssl_ca_path):
+                raise RuntimeError("SSL CA certificate file was not created")
+            
+            print(f"✅ SSL certificate written to: {self.ssl_ca_path}")
 
     def _get_connection(self):
         if self.conn is None or not self.conn.open:
@@ -72,7 +88,9 @@ class DatabaseManager:
 
     def _sanitize_name(self, name: str) -> str:
         sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', str(name))
-        if sanitized[0].isdigit():
+        if not sanitized:
+            sanitized = 'col_unnamed'
+        elif sanitized[0].isdigit():
             sanitized = 'col_' + sanitized
         return sanitized[:64]
 
@@ -89,12 +107,13 @@ class DatabaseManager:
         elif 'date' in dtype_str:
             return 'DATE'
         else:
-            max_len = max((len(str(v)) for v in sample_values if v is not None), default=255)
+            valid_lengths = [len(str(v)) for v in sample_values if v is not None and str(v).strip()]
+            max_len = max(valid_lengths, default=255) if valid_lengths else 255
             if max_len > 65535:
                 return 'LONGTEXT'
             elif max_len > 255:
                 return 'TEXT'
-            return f'VARCHAR({min(max_len * 2, 500)})'
+            return f'VARCHAR({min(max(max_len * 2, 50), 500)})'
 
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         dot = np.dot(vec1, vec2)
@@ -192,7 +211,8 @@ class DatabaseManager:
                 try:
                     mean_val = col_data.mean()
                     median_val = col_data.median()
-                    mode_val = col_data.mode().iloc[0] if not col_data.mode().empty else None
+                    mode_series = col_data.mode()
+                    mode_val = mode_series.iloc[0] if len(mode_series) > 0 else None
                     std_val = col_data.std()
                     min_val = col_data.min()
                     max_val = col_data.max()
@@ -201,7 +221,7 @@ class DatabaseManager:
                         f"Column '{col}' (NUMERICAL): mean={mean_val:.2f}, median={median_val:.2f}, "
                         f"mode={mode_val}, std_dev={std_val:.2f}, min={min_val}, max={max_val}"
                     )
-                except:
+                except Exception:
                     stats_parts.append(f"Column '{col}' (NUMERICAL): statistics unavailable")
             else:
                 unique_vals = col_data.unique()

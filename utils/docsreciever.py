@@ -294,7 +294,7 @@ class DocumentProcessor:
             return self.process_csv(file_path)
         elif ext == ".xlsx":
             return self.process_xlsx(file_path)
-        elif ext in [".ppt", ".pptx"]:
+        elif ext == ".pptx":
             return self.process_pptx(file_path)
         elif ext == ".zip":
             return self.process_zip(file_path)

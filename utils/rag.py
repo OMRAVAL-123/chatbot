@@ -134,6 +134,10 @@ class EmbeddingGenerator:
         
         model = self._get_model()
         embeddings = model.encode(prepared_texts, convert_to_numpy=True)
+        if embeddings is None:
+            return []
+        if hasattr(embeddings, 'shape'):
+            return [np.array(emb) for emb in embeddings] if embeddings.shape[0] > 0 else []
         return [np.array(emb) for emb in embeddings] if len(embeddings) > 0 else []
 
     def generate_query_embedding(self, query: str) -> np.ndarray:

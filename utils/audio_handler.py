@@ -10,6 +10,7 @@ class AudioInputHandler:
         self.recognizer.dynamic_energy_threshold = True
     
     def transcribe_audio_file(self, audio_file):
+        tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
                 tmp_file.write(audio_file.read())
@@ -20,7 +21,6 @@ class AudioInputHandler:
                 audio_data = self.recognizer.record(source)
             
             text = self.recognizer.recognize_google(audio_data)
-            os.unlink(tmp_path)
             return {"success": True, "text": text, "error": None}
         
         except sr.UnknownValueError:
@@ -29,6 +29,12 @@ class AudioInputHandler:
             return {"success": False, "text": None, "error": f"Speech recognition service error: {str(e)}"}
         except Exception as e:
             return {"success": False, "text": None, "error": f"Error processing audio: {str(e)}"}
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
     
     def transcribe_from_microphone(self, timeout=10, phrase_time_limit=30):
         try:

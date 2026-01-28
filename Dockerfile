@@ -21,6 +21,8 @@ COPY . .
 
 RUN mkdir -p docs
 
+RUN mkdir -p /tmp && chmod 777 /tmp
+
 RUN useradd -m -u 1000 user
 RUN chown -R user:user /app
 USER user
