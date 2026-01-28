@@ -9,15 +9,43 @@ class LLMHandler:
         self.api_key = os.getenv("GROQ_API_KEY", "")
         self.model = "llama-3.1-8b-instant"
         self.client = None
+        self.max_input_tokens = 4000
+        self.max_output_tokens = 1024
 
     def _get_client(self):
         if self.client is None:
             self.client = Groq(api_key=self.api_key)
         return self.client
 
+    def _estimate_tokens(self, text: str) -> int:
+        if not text:
+            return 0
+        return len(text) // 4 + 1
+
+    def _truncate_to_tokens(self, text: str, max_tokens: int) -> str:
+        if not text:
+            return ""
+        estimated = self._estimate_tokens(text)
+        if estimated <= max_tokens:
+            return text
+        max_chars = max_tokens * 4
+        return text[:max_chars] + "... [truncated]"
+
     def _call_llm(self, system_prompt: str, user_prompt: str) -> Tuple[str, int]:
         try:
             client = self._get_client()
+            
+            system_tokens = self._estimate_tokens(system_prompt)
+            user_tokens = self._estimate_tokens(user_prompt)
+            total_input = system_tokens + user_tokens
+            
+            if total_input > self.max_input_tokens:
+                available_for_user = self.max_input_tokens - system_tokens - 100
+                if available_for_user < 500:
+                    system_prompt = self._truncate_to_tokens(system_prompt, 800)
+                    available_for_user = self.max_input_tokens - 800 - 100
+                user_prompt = self._truncate_to_tokens(user_prompt, max(500, available_for_user))
+            
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -25,13 +53,16 @@ class LLMHandler:
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=2048
+                max_tokens=self.max_output_tokens
             )
             content = response.choices[0].message.content
             tokens = response.usage.total_tokens if response.usage else 0
             return content, tokens
         except Exception as e:
-            return f"Error: {str(e)}", 0
+            error_msg = str(e)
+            if "rate_limit" in error_msg.lower() or "413" in error_msg:
+                return "Error: Request too large. Please try a shorter query or select fewer documents.", 0
+            return f"Error: {error_msg}", 0
 
     def split_questions(self, text: str) -> List[str]:
         """Split input text into multiple questions if present"""

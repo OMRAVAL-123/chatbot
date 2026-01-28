@@ -113,41 +113,16 @@ class EmbeddingGenerator:
         return self.model
 
     def generate_embedding(self, text: str) -> np.ndarray:
-        """Generate embedding for a single text passage"""
-        if not text or not isinstance(text, str):
-            text = str(text)
-        text = text[:1000]  # Limit text length
         model = self._get_model()
-        embedding = model.encode(f"passage: {text}", convert_to_numpy=True)
-        return embedding
+        return model.encode(f"passage: {text}")
 
-    def generate_embeddings(self, texts: List[str]) -> list:
-        """Generate embeddings for multiple texts - returns list"""
-        if not texts:
-            return []
-        prepared_texts = []
-        for t in texts:
-            if not isinstance(t, str):
-                t = str(t)
-            t = t[:1000]
-            prepared_texts.append(f"passage: {t}")
-        
+    def generate_embeddings(self, texts: List[str]) -> np.ndarray:
         model = self._get_model()
-        embeddings = model.encode(prepared_texts, convert_to_numpy=True)
-        if embeddings is None:
-            return []
-        if hasattr(embeddings, 'shape'):
-            return [np.array(emb) for emb in embeddings] if embeddings.shape[0] > 0 else []
-        return [np.array(emb) for emb in embeddings] if len(embeddings) > 0 else []
+        return model.encode([f"passage: {t}" for t in texts])
 
     def generate_query_embedding(self, query: str) -> np.ndarray:
-        """Generate embedding for a query"""
-        if not query or not isinstance(query, str):
-            query = str(query)
-        query = query[:1000]
         model = self._get_model()
-        embedding = model.encode(f"query: {query}", convert_to_numpy=True)
-        return embedding
+        return model.encode(f"query: {query}")
 
     def embedding_to_blob(self, embedding: np.ndarray) -> bytes:
         return pickle.dumps(embedding)

@@ -32,30 +32,14 @@ class DatabaseManager:
         if not self.ssl_ca_content:
             return
 
-        # Check if ssl_ca_content is a file path or actual certificate content
-        if os.path.exists(self.ssl_ca_content):
-            # It's a file path - use it directly
-            self.ssl_ca_path = self.ssl_ca_content
-            print(f"✅ Using SSL certificate from: {self.ssl_ca_path}")
-        else:
-            # It's certificate content - write to temp file
-            cert_content = self.ssl_ca_content.replace("\\n", "\n")
-            
-            # Use platform-appropriate temp directory
-            if os.name == 'nt':  # Windows
-                temp_dir = os.path.join(os.environ.get('TEMP', 'C:\\Temp'), 'chatbot')
-                os.makedirs(temp_dir, exist_ok=True)
-                self.ssl_ca_path = os.path.join(temp_dir, "aiven_ca.pem")
-            else:  # Linux/Docker
-                self.ssl_ca_path = "/tmp/aiven_ca.pem"
+        cert_content = self.ssl_ca_content.replace("\\n", "\n")
+        self.ssl_ca_path = "/tmp/aiven_ca.pem"
 
-            with open(self.ssl_ca_path, "w") as f:
-                f.write(cert_content)
+        with open(self.ssl_ca_path, "w") as f:
+            f.write(cert_content)
 
-            if not os.path.exists(self.ssl_ca_path):
-                raise RuntimeError("SSL CA certificate file was not created")
-            
-            print(f"✅ SSL certificate written to: {self.ssl_ca_path}")
+        if not os.path.exists(self.ssl_ca_path):
+            raise RuntimeError("SSL CA certificate file was not created")
 
     def _get_connection(self):
         if self.conn is None or not self.conn.open:
@@ -88,9 +72,7 @@ class DatabaseManager:
 
     def _sanitize_name(self, name: str) -> str:
         sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', str(name))
-        if not sanitized:
-            sanitized = 'col_unnamed'
-        elif sanitized[0].isdigit():
+        if sanitized[0].isdigit():
             sanitized = 'col_' + sanitized
         return sanitized[:64]
 
@@ -107,13 +89,12 @@ class DatabaseManager:
         elif 'date' in dtype_str:
             return 'DATE'
         else:
-            valid_lengths = [len(str(v)) for v in sample_values if v is not None and str(v).strip()]
-            max_len = max(valid_lengths, default=255) if valid_lengths else 255
+            max_len = max((len(str(v)) for v in sample_values if v is not None), default=255)
             if max_len > 65535:
                 return 'LONGTEXT'
             elif max_len > 255:
                 return 'TEXT'
-            return f'VARCHAR({min(max(max_len * 2, 50), 500)})'
+            return f'VARCHAR({min(max_len * 2, 500)})'
 
     def _cosine_similarity(self, vec1: np.ndarray, vec2: np.ndarray) -> float:
         dot = np.dot(vec1, vec2)
@@ -211,8 +192,7 @@ class DatabaseManager:
                 try:
                     mean_val = col_data.mean()
                     median_val = col_data.median()
-                    mode_series = col_data.mode()
-                    mode_val = mode_series.iloc[0] if len(mode_series) > 0 else None
+                    mode_val = col_data.mode().iloc[0] if not col_data.mode().empty else None
                     std_val = col_data.std()
                     min_val = col_data.min()
                     max_val = col_data.max()
@@ -221,7 +201,7 @@ class DatabaseManager:
                         f"Column '{col}' (NUMERICAL): mean={mean_val:.2f}, median={median_val:.2f}, "
                         f"mode={mode_val}, std_dev={std_val:.2f}, min={min_val}, max={max_val}"
                     )
-                except Exception:
+                except:
                     stats_parts.append(f"Column '{col}' (NUMERICAL): statistics unavailable")
             else:
                 unique_vals = col_data.unique()
@@ -457,186 +437,35 @@ class DatabaseManager:
             return "structured"
         else:
             return "none"
-    
-    def is_time_sensitive_query(self, query: str) -> bool:
-        """Check if query requires live/external data and should skip database"""
-        time_sensitive_keywords = [
-            "cricket", "match", "live", "current", "today", "score", "now",
-            "latest news", "trending", "viral", "breaking", "update",
-            "weather", "stock", "price today", "current price",
-            "happening now", "right now", "this moment", "real-time",
-            "ongoing", "in progress", "at the moment"
-        ]
-        
-        query_lower = query.lower()
-        
-        for keyword in time_sensitive_keywords:
-            if keyword in query_lower:
-                print(f"🌐 Time-sensitive keyword detected: '{keyword}' - Routing to web")
-                return True
-        
-        return False
-    
-    def check_intent_mismatch(self, query: str, rows: List[Dict[str, Any]]) -> bool:
-        """Check if returned data domain mismatches the question intent"""
-        if not rows or len(rows) == 0:
-            return False  # No data to check
-        
-        # Extract key domain terms from query
-        query_lower = query.lower()
-        
-        # Domain-specific keywords that indicate specific intent
-        domain_indicators = {
-            "cricket": ["cricket", "bat", "ball", "wicket", "run", "over", "innings"],
-            "football": ["football", "soccer", "goal", "penalty", "striker"],
-            "weather": ["weather", "temperature", "rain", "forecast", "climate"],
-            "stock": ["stock", "share", "market", "trading", "nasdaq", "dow"],
-            "news": ["news", "article", "headline", "report", "journalist"],
-            "product": ["product", "item", "price", "buy", "sell", "inventory"],
-        }
-        
-        # Check if query has strong domain intent
-        detected_domain = None
-        for domain, keywords in domain_indicators.items():
-            if any(kw in query_lower for kw in keywords):
-                detected_domain = domain
-                break
-        
-        if not detected_domain:
-            return False  # No strong domain detected, accept results
-        
-        # Check if any row data contains domain-related terms
-        row_text = " ".join([str(v).lower() for row in rows[:5] for v in row.values()])
-        
-        domain_match = any(kw in row_text for kw in domain_indicators[detected_domain])
-        
-        if not domain_match:
-            print(f"⚠️  Intent mismatch: Query about '{detected_domain}' but data doesn't match")
-            return True  # Mismatch detected
-        
-        return False  # Data matches intent
 
     def validate_sql(self, sql: str) -> Tuple[bool, str]:
-        """Validate and sanitize SQL - extract pure SQL from LLM response"""
-        if not sql or not sql.strip():
-            return False, "Empty SQL query"
-        
-        sql = sql.strip()
-        
-        # Extract SQL from code blocks if present
-        if "```" in sql:
-            lines = sql.split("\n")
-            sql_lines = []
-            in_code = False
-            for line in lines:
-                if line.strip().startswith("```"):
-                    in_code = not in_code
-                    continue
-                if in_code:
-                    sql_lines.append(line)
-            sql = "\n".join(sql_lines).strip()
-        
-        # Remove "sql" prefix if present
-        if sql.lower().startswith("sql"):
-            sql = sql[3:].strip()
-        
-        # Extract only the SQL statement - stop at first semicolon
-        if ";" in sql:
-            sql = sql.split(";")[0].strip() + ";"
-        
-        # Check if it contains natural language (multiple sentences or explanations)
-        # SQL should be a single statement, not paragraphs
-        lines = [l.strip() for l in sql.split("\n") if l.strip()]
-        
-        # If more than 5 lines or contains explanation keywords, it's likely contaminated
-        explanation_keywords = ["this query", "the above", "note that", "explanation", "because", "in order to", "we use", "i have", "here is"]
-        for line in lines:
-            line_lower = line.lower()
-            for kw in explanation_keywords:
-                if kw in line_lower and not line_lower.startswith("select"):
-                    return False, "SQL contains natural language explanation - regeneration needed"
-        
         sql_upper = sql.strip().upper()
         
-        # Must start with SELECT
         if not sql_upper.startswith("SELECT"):
             return False, "Only SELECT queries are allowed"
         
-        # Check for dangerous keywords
-        dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE", "GRANT", "REVOKE", "EXEC", "EXECUTE"]
+        dangerous = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE", "GRANT", "REVOKE"]
         for keyword in dangerous:
             if keyword in sql_upper:
                 return False, f"Dangerous keyword '{keyword}' detected"
         
-        # Check for multiple queries (UNION, multiple SELECT, OR between queries)
-        if "UNION" in sql_upper:
-            return False, "UNION queries are not allowed"
-        
-        # Check for OR followed by SELECT (invalid pattern)
-        if re.search(r'\bOR\s+SELECT\b', sql_upper):
-            return False, "Multiple queries with OR are not allowed - use single query with AND/OR in WHERE clause"
-        
-        # Count SELECT statements - should only be 1
-        select_count = sql_upper.count("SELECT")
-        if select_count > 1:
-            return False, f"Multiple SELECT statements detected ({select_count}) - only one query allowed"
-        
         return True, "Valid"
 
     def generate_sql_with_llm(self, question: str, tables_info: str, chat_context: str = "") -> str:
-        system_prompt = """You are a professional MySQL query generator. Output ONLY the SQL query.
+        system_prompt = """You are an expert MySQL query generator. Given a user question, table schema, and sample rows, generate a valid MySQL SELECT query.
 
-====================
-OUTPUT FORMAT (CRITICAL!)
-====================
-Your response MUST be the raw SQL query only. Nothing else.
-
-WRONG outputs (DO NOT do this):
-- ```sql SELECT ... ```
-- Here is the query: SELECT ...
-- To answer this, I will: SELECT ...
-
-CORRECT output:
-SELECT * FROM `table_name` WHERE condition LIMIT 100;
-
-====================
-ABSOLUTE CONSTRAINTS
-====================
-1. ALWAYS use SELECT * FROM pattern - retrieve ALL columns
-2. Output must start with SELECT and contain only ONE SQL SELECT statement
-3. Do not include explanations, comments, markdown, or extra text
-4. Use only the tables and columns explicitly listed in the schema
-5. Do not invent column names, table names, or enum values
-6. Use proper MySQL syntax with backticks for table and column names
-7. Always add LIMIT clause (default LIMIT 100)
-8. NO UNION or multiple SELECT statements
-
-====================
-SEMANTIC INTERPRETATION (CRITICAL!)
-====================
-IMPORTANT: The 'gender' column typically contains: [Men, Women, Unisex]
-   - There is usually NO 'Kids' or 'Children' gender value!
-   - NEVER use WHERE gender = 'Kids' unless you see it in the sample data!
-
-When interpreting natural language:
-1. "kids" / "children" / "youth" → Use SIZE filter for smaller sizes (e.g., size <= 7)
-2. "adults" → Use SIZE filter for larger sizes (e.g., size >= 9)
-3. "formal" → Look for 'Formal' in category-related columns
-4. "casual" → Look for 'Casual' in category-related columns
-5. "top rated" / "best" → ORDER BY rating column DESC
-6. "expensive" / "costliest" → ORDER BY price DESC
-7. "cheap" / "affordable" → ORDER BY price ASC
-8. "latest" / "new" → ORDER BY launch_year/created_at DESC
-
-====================
-SELF-CHECK BEFORE OUTPUT
-====================
-Before producing the final SQL, verify:
-- Every column used exists in the schema
-- Every literal value used is valid for that column (check sample data!)
-- If using 'gender' column, value MUST be in the sample data
-- The query answers the question directly
-- No explanatory text is included"""
+RULES:
+1. Generate ONLY the SQL query, no explanation
+2. Use only SELECT statements
+3. Use proper MySQL syntax
+4. Use backticks for table and column names
+5. Handle NULL values appropriately
+6. Use LIMIT for large result sets
+7. Use previous conversation context to resolve pronouns and references
+8. ANALYZE the sample rows to understand what data is in each column
+9. If user asks for something like "office wear", check sample rows to see which column might contain that term (e.g., description, category, sub_category)
+10. Use LIKE '%keyword%' for text searches in appropriate columns
+11. If a category doesn't exist exactly as named, search in description or related text fields"""
 
         context_section = ""
         if chat_context:
@@ -645,50 +474,32 @@ Before producing the final SQL, verify:
 
 """
 
-        user_prompt = f"""{context_section}====================
-DATABASE SCHEMA & SAMPLE DATA
-====================
+        user_prompt = f"""{context_section}Tables and sample data:
 {tables_info}
 
-====================
-USER QUESTION
-====================
-{question}
+User question: {question}
 
-Generate the SQL query (raw SQL only, no explanations):"""
+Analyze the sample rows to understand the data structure and values. Generate the SQL query:"""
 
         response, _ = self.llm._call_llm(system_prompt, user_prompt)
         
         sql = response.strip()
-        
-        # Clean up markdown code blocks
         if sql.startswith("```"):
             lines = sql.split("\n")
             sql_lines = []
             in_code = False
             for line in lines:
-                if line.strip().startswith("```"):
+                if line.startswith("```"):
                     in_code = not in_code
                     continue
-                if in_code:
+                if in_code or not line.startswith("```"):
                     sql_lines.append(line)
-            sql = "\n".join(sql_lines).strip()
+            sql = "\n".join(sql_lines)
         
-        # Remove "sql" prefix if present
+        sql = sql.strip()
         if sql.lower().startswith("sql"):
             sql = sql[3:].strip()
         
-        # Extract only the SELECT statement - take first line or up to semicolon
-        if "SELECT" in sql.upper():
-            # Find where SELECT starts
-            select_pos = sql.upper().find("SELECT")
-            sql = sql[select_pos:]
-        
-        # Take only first statement (up to first semicolon)
-        if ";" in sql:
-            sql = sql.split(";")[0].strip()
-        
-        # Ensure it ends with semicolon
         sql = sql.rstrip(";") + ";"
         
         return sql
@@ -698,12 +509,13 @@ Generate the SQL query (raw SQL only, no explanations):"""
         structured_docs = [d for d in relevant_docs if d["is_structured"]]
         
         if not structured_docs:
-            return {"answer": "No structured data found.", "sql": "", "data": [], "full_data": [], "retry_attempted": False}
+            return {"answer": "No structured data found.", "sql": "", "data": [], "full_data": []}
         
         tables_info_parts = []
         for d in structured_docs:
             table_name = d['table_name']
             summary = d.get('summary', '')
+            
             try:
                 sample_rows = self._execute(f"SELECT * FROM `{table_name}` LIMIT 5", fetch=True)
                 sample_str = ""
@@ -716,71 +528,18 @@ Generate the SQL query (raw SQL only, no explanations):"""
         
         tables_info = "\n\n".join(tables_info_parts)
         
-        # PASS 1: Normal SQL generation
         sql = self.generate_sql_with_llm(query, tables_info, chat_context)
         
         if not sql or sql == ";":
-            return {"answer": "Could not generate SQL query.", "sql": "", "data": [], "full_data": [], "retry_attempted": False}
+            return {"answer": "Could not generate SQL query.", "sql": "", "data": [], "full_data": []}
         
-        # GUARD 2: SQL Sanitization - validate and regenerate if needed
         is_valid, validation_msg = self.validate_sql(sql)
         if not is_valid:
-            if "natural language" in validation_msg.lower() or "explanation" in validation_msg.lower():
-                print(f"⚠️  SQL contains natural language. Regenerating...")
-                # Try one more time with stricter prompt
-                sql = self.generate_sql_with_llm(query, tables_info, chat_context)
-                is_valid, validation_msg = self.validate_sql(sql)
-                if not is_valid:
-                    return {"answer": f"Query rejected after retry: {validation_msg}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
-            else:
-                return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
+            return {"answer": f"Query rejected: {validation_msg}", "sql": sql, "data": [], "full_data": []}
         
         try:
             rows = self._execute(sql, fetch=True)
             rows = list(rows) if rows else []
-            
-            # PASS 2: If 0 rows, retry with smarter reinterpretation
-            if len(rows) == 0:
-                print(f"⚠️  Pass-1 returned 0 rows. Attempting smart reinterpretation...")
-                
-                retry_sql = self._generate_retry_sql(query, tables_info, sql, chat_context)
-                
-                if retry_sql and retry_sql != sql:
-                    is_valid_retry, _ = self.validate_sql(retry_sql)
-                    if is_valid_retry:
-                        try:
-                            rows = self._execute(retry_sql, fetch=True)
-                            rows = list(rows) if rows else []
-                            if len(rows) > 0:
-                                print(f"✅ Pass-2 successful! Found {len(rows)} rows")
-                                sql = retry_sql  # Use the retry SQL
-                            else:
-                                print(f"❌ Pass-2 also returned 0 rows")
-                        except:
-                            print(f"❌ Pass-2 SQL execution failed")
-            
-            # If still 0 rows after 2 passes, return indication for web scraping
-            if len(rows) == 0:
-                return {
-                    "answer": "", 
-                    "sql": sql, 
-                    "data": [], 
-                    "full_data": [], 
-                    "retry_attempted": True,
-                    "needs_web_fallback": True
-                }
-            
-            # INTENT MISMATCH CHECK: Verify data domain matches query intent
-            if self.check_intent_mismatch(query, rows):
-                print(f"🌐 Data domain doesn't match query intent - routing to web")
-                return {
-                    "answer": "",
-                    "sql": sql,
-                    "data": [],
-                    "full_data": [],
-                    "retry_attempted": True,
-                    "needs_web_fallback": True
-                }
             
             data_section = self._build_data_table(rows)
             
@@ -802,85 +561,10 @@ Generate the SQL query (raw SQL only, no explanations):"""
             
             full_answer = f"{data_section}\n\n{llm_analysis}"
             
-            return {"answer": full_answer, "sql": sql, "data": rows[:50], "full_data": rows, "retry_attempted": len(rows) > 0}
+            return {"answer": full_answer, "sql": sql, "data": rows[:50], "full_data": rows}
             
         except Exception as e:
-            return {"answer": f"Query execution error: {str(e)}", "sql": sql, "data": [], "full_data": [], "retry_attempted": False}
-
-    def _generate_retry_sql(self, question: str, tables_info: str, failed_sql: str, chat_context: str = "") -> str:
-        """Generate a smarter SQL query when first attempt returns 0 rows"""
-        system_prompt = """You are an expert at reinterpreting failed SQL queries.
-The previous query returned 0 rows. Generate a NEW query with relaxed constraints.
-
-OUTPUT FORMAT: Raw SQL query ONLY. No explanations, no markdown, no comments.
-
-COMMON FAILURES TO FIX:
-1. Used gender = 'Kids' → FIX: Use size <= 7 instead (gender only has Men/Women/Unisex)
-2. Used non-existent category → FIX: Use LIKE '%keyword%' on description/name
-3. Too restrictive WHERE → FIX: Remove some conditions
-4. Wrong column name → FIX: Check schema for correct name
-
-REINTERPRETATION RULES:
-- "kids"/"children" → WHERE size <= 7 (NOT gender = 'Kids')
-- "adult" → WHERE size >= 9
-- "top rated"/"best" → ORDER BY rating DESC
-- "expensive" → ORDER BY price DESC
-- "cheap" → ORDER BY price ASC
-- Exact match failed → Use LIKE '%value%'
-
-CONSTRAINTS:
-- ALWAYS use SELECT * FROM pattern
-- Only ONE SQL query
-- No UNION, no multiple SELECTs
-- Add LIMIT 100"""
-
-        context_section = ""
-        if chat_context:
-            context_section = f"""Previous conversation:
-{chat_context}
-
-"""
-
-        user_prompt = f"""{context_section}Schema:
-{tables_info}
-
-Original question: {question}
-
-Failed SQL: {failed_sql}
-
-Generate improved SQL (raw query only):"""
-
-        response, _ = self.llm._call_llm(system_prompt, user_prompt)
-        
-        sql = response.strip()
-        
-        # Clean up markdown
-        if sql.startswith("```"):
-            lines = sql.split("\n")
-            sql_lines = []
-            in_code = False
-            for line in lines:
-                if line.strip().startswith("```"):
-                    in_code = not in_code
-                    continue
-                if in_code:
-                    sql_lines.append(line)
-            sql = "\n".join(sql_lines).strip()
-        
-        if sql.lower().startswith("sql"):
-            sql = sql[3:].strip()
-        
-        # Extract SELECT statement
-        if "SELECT" in sql.upper():
-            select_pos = sql.upper().find("SELECT")
-            sql = sql[select_pos:]
-        
-        if ";" in sql:
-            sql = sql.split(";")[0].strip()
-        
-        sql = sql.rstrip(";") + ";"
-        
-        return sql
+            return {"answer": f"Query execution error: {str(e)}", "sql": sql, "data": [], "full_data": []}
 
     def execute_unstructured_query(self, query: str, relevant_docs: List[Dict[str, Any]], 
                                     chat_context: str = "", top_k: int = 5) -> Dict[str, Any]:
@@ -957,107 +641,54 @@ Generate improved SQL (raw query only):"""
         """, (session_id, user_query, final_answer, query_type, doc_used))
 
     def process_user_query(self, session_id: str, query: str) -> Dict[str, Any]:
-        """Main entry point for processing user queries with multi-question support"""
         from utils.web_scraper import scrape_web_content
-        
-        # Split into multiple questions if needed
-        questions = self.llm.split_questions(query)
-        
-        if len(questions) > 1:
-            print(f"📝 Detected {len(questions)} questions")
-            # Process each question independently
-            all_answers = []
-            combined_result = {
-                "answer": "",
-                "source": "multiple",
-                "docs": [],
-                "sql": None,
-                "data": [],
-                "full_data": [],
-                "chunks": [],
-                "web_sources": []
-            }
-            
-            for i, q in enumerate(questions):
-                print(f"Processing question {i+1}/{len(questions)}: {q[:50]}...")
-                result = self._process_single_question(session_id, q, scrape_web_content)
-                all_answers.append(f"**Q{i+1}:** {q}\n\n{result['answer']}")
-                
-                # Aggregate results
-                if result.get("docs"):
-                    combined_result["docs"].extend(result["docs"])
-                if result.get("sql"):
-                    combined_result["sql"] = result["sql"]  # Keep last SQL
-                if result.get("full_data"):
-                    combined_result["full_data"].extend(result["full_data"])
-                if result.get("chunks"):
-                    combined_result["chunks"].extend(result["chunks"])
-                if result.get("web_sources"):
-                    combined_result["web_sources"].extend(result["web_sources"])
-            
-            # Combine all answers
-            combined_result["answer"] = "\n\n---\n\n".join(all_answers)
-            
-            # Save combined result
-            self.save_chat(session_id, query, combined_result["answer"], "multiple", "Multiple sources")
-            
-            return combined_result
-        else:
-            # Single question - process normally
-            return self._process_single_question(session_id, query, scrape_web_content)
-    
-    def _process_single_question(self, session_id: str, query: str, scrape_web_content) -> Dict[str, Any]:
-        """Process a single question through the pipeline"""
         
         chat_context = self.get_chat_context(session_id, limit=5)
         
         relevant_docs = self.select_relevant_documents(query, top_k=3)
         
-        # Check if documents are relevant enough
         if not relevant_docs or (relevant_docs and max([d.get("score", 0) for d in relevant_docs]) < 0.3):
-            # No relevant docs - go straight to web
-            return self._web_search_fallback(session_id, query, scrape_web_content, "No relevant documents found")
-        
-        # GUARD 1: LLM-based intelligent routing decision
-        # Build schema summary for LLM
-        schema_summary = ""
-        if relevant_docs:
-            schema_parts = []
-            for doc in relevant_docs[:3]:
-                if doc.get("is_structured") and doc.get("table_name"):
-                    try:
-                        # Get column info
-                        table_name = doc["table_name"]
-                        sample = self._execute(f"SELECT * FROM `{table_name}` LIMIT 1", fetch=True)
-                        if sample:
-                            columns = list(sample[0].keys())
-                            schema_parts.append(f"Table: {table_name}\nColumns: {', '.join(columns)}")
-                    except:
-                        pass
-                else:
-                    schema_parts.append(f"Document: {doc.get('doc_name', 'Unknown')}\nType: Unstructured text")
+            try:
+                web_result = scrape_web_content(query)
+                if web_result["success"]:
+                    web_context = ""
+                    if web_result["detailed_content"]:
+                        web_context = web_result["detailed_content"]
+                    elif web_result["search_results"]:
+                        web_context = "\n\n".join([
+                            f"- {r['title']}: {r['snippet']}" 
+                            for r in web_result["search_results"][:3]
+                        ])
+                    
+                    if web_context:
+                        answer_text, _ = self.llm.web_retrieval(query, web_context)
+                        final_answer = f"🌐 **Source: Web Search** (No relevant documents found in knowledge base)\n\n{answer_text}"
+                        
+                        if web_result["search_results"]:
+                            sources = "\n\n**References:**\n" + "\n".join([
+                                f"- [{r['title']}]({r['link']})" 
+                                for r in web_result["search_results"][:3]
+                            ])
+                            final_answer += sources
+                        
+                        self.save_chat(session_id, query, final_answer, "web_search", "Web")
+                        return {
+                            "answer": final_answer, 
+                            "source": "web", 
+                            "docs": [],
+                            "web_sources": web_result["search_results"][:3]
+                        }
+            except Exception as e:
+                print(f"Web scraping failed: {e}")
             
-            schema_summary = "\n\n".join(schema_parts) if schema_parts else "No structured schema available"
-        
-        # Ask LLM if web scraping is needed
-        needs_web, reason = self.llm.should_use_web_scraping(query, schema_summary)
-        
-        if needs_web:
-            print(f"🌐 LLM Decision: WEB - {reason}")
-            return self._web_search_fallback(session_id, query, scrape_web_content, f"LLM routing: {reason}")
-        else:
-            print(f"💾 LLM Decision: DATABASE - {reason}")
+            answer = "No relevant documents found in the knowledge base. Please upload documents or try a different query."
+            self.save_chat(session_id, query, answer, "none", "")
+            return {"answer": answer, "source": "none", "docs": []}
         
         query_type = self.route_query(query, relevant_docs)
         
         if query_type == "structured":
             result = self.execute_structured_query(query, relevant_docs, chat_context)
-            
-            # Check if we need web fallback (0 rows after 2 passes)
-            if result.get("needs_web_fallback"):
-                print(f"🌐 Both SQL attempts failed. Falling back to web search...")
-                return self._web_search_fallback(session_id, query, scrape_web_content, "Database query returned no results")
-            
             doc_names = ", ".join([d["doc_name"] for d in relevant_docs if d["is_structured"]])
             self.save_chat(session_id, query, result["answer"], "structured", doc_names)
             return {
@@ -1071,12 +702,6 @@ Generate improved SQL (raw query only):"""
         
         elif query_type == "unstructured":
             result = self.execute_unstructured_query(query, relevant_docs, chat_context)
-            
-            # If no relevant chunks found, try web
-            if not result.get("chunks") or len(result.get("chunks", [])) == 0:
-                print(f"🌐 No relevant chunks found. Falling back to web search...")
-                return self._web_search_fallback(session_id, query, scrape_web_content, "No relevant content in documents")
-            
             doc_names = ", ".join([d["doc_name"] for d in relevant_docs if not d["is_structured"]])
             self.save_chat(session_id, query, result["answer"], "unstructured", doc_names)
             return {
@@ -1087,68 +712,9 @@ Generate improved SQL (raw query only):"""
             }
         
         else:
-            # Unknown query type - try web
-            return self._web_search_fallback(session_id, query, scrape_web_content, "Could not determine query type")
-    
-    def _web_search_fallback(self, session_id: str, query: str, scrape_web_content, reason: str) -> Dict[str, Any]:
-        """Fallback to web search when other methods fail"""
-        try:
-            print(f"🌐 Attempting web search for: {query}")
-            web_result = scrape_web_content(query, llm=self.llm)
-            
-            print(f"🔍 Web result success: {web_result.get('success', False)}")
-            print(f"🔍 Search results count: {len(web_result.get('search_results', []))}")
-            print(f"🔍 Detailed content length: {len(web_result.get('detailed_content', ''))}")
-            
-            if web_result.get("error"):
-                print(f"❌ Web scraping error: {web_result['error']}")
-            
-            if web_result.get("success"):
-                web_context = ""
-                if web_result.get("detailed_content"):
-                    web_context = web_result["detailed_content"]
-                    print(f"✅ Using detailed content ({len(web_context)} chars)")
-                elif web_result.get("search_results"):
-                    web_context = "\n\n".join([
-                        f"- {r.get('title', 'No title')}: {r.get('snippet', 'No snippet')}" 
-                        for r in web_result["search_results"][:3]
-                    ])
-                    print(f"✅ Using search snippets ({len(web_context)} chars)")
-                
-                if web_context and len(web_context.strip()) > 10:
-                    print(f"🤖 Generating answer from web content...")
-                    answer_text, _ = self.llm.web_retrieval(query, web_context)
-                    final_answer = f"🌐 **Source: Web Search** ({reason})\n\n{answer_text}"
-                    
-                    if web_result.get("search_results"):
-                        sources = "\n\n**References:**\n" + "\n".join([
-                            f"- [{r.get('title', 'Source')}]({r.get('link', '#')})" 
-                            for r in web_result["search_results"][:3]
-                        ])
-                        final_answer += sources
-                    
-                    self.save_chat(session_id, query, final_answer, "web_search", "Web")
-                    print(f"✅ Web search successful!")
-                    return {
-                        "answer": final_answer, 
-                        "source": "web", 
-                        "docs": [],
-                        "web_sources": web_result.get("search_results", [])[:3]
-                    }
-                else:
-                    print(f"⚠️ Web context is empty or too short")
-            else:
-                print(f"❌ Web search returned success=False")
-                
-        except Exception as e:
-            print(f"❌ Web scraping exception: {type(e).__name__}: {str(e)}")
-            import traceback
-            traceback.print_exc()
-        
-        # If web also fails
-        answer = f"🔍 **{reason}**\n\nI attempted to search the web for this information, but encountered an issue. This could be due to:\n- Network connectivity\n- Rate limiting from search services\n- No relevant results found\n\nPlease try:\n1. Rephrasing your question\n2. Being more specific\n3. Trying again in a moment"
-        self.save_chat(session_id, query, answer, "none", "")
-        return {"answer": answer, "source": "none", "docs": []}
+            answer = "I couldn't determine the type of your query. Please try rephrasing."
+            self.save_chat(session_id, query, answer, "unknown", "")
+            return {"answer": answer, "source": "none", "docs": relevant_docs}
 
     def get_all_documents(self) -> List[Dict[str, Any]]:
         rows = self._execute("""
