@@ -584,41 +584,59 @@ class DatabaseManager:
         return True, "Valid"
 
     def generate_sql_with_llm(self, question: str, tables_info: str, chat_context: str = "") -> str:
-        system_prompt = """You are an expert MySQL query generator. Given a user question, table schema, and sample rows, generate a valid MySQL SELECT query.
+        system_prompt = """You are a professional MySQL query generator. Output ONLY the SQL query.
 
-CRITICAL RULES:
+====================
+OUTPUT FORMAT (CRITICAL!)
+====================
+Your response MUST be the raw SQL query only. Nothing else.
+
+WRONG outputs (DO NOT do this):
+- ```sql SELECT ... ```
+- Here is the query: SELECT ...
+- To answer this, I will: SELECT ...
+
+CORRECT output:
+SELECT * FROM `table_name` WHERE condition LIMIT 100;
+
+====================
+ABSOLUTE CONSTRAINTS
+====================
 1. ALWAYS use SELECT * FROM pattern - retrieve ALL columns
-2. NEVER select specific columns - always use SELECT *
-3. Use WHERE clause to filter rows based on user's question
-4. Generate ONLY ONE SQL query - NEVER use OR between queries
-5. Use proper MySQL syntax with backticks for table and column names
-6. Handle NULL values appropriately
-7. Use LIMIT clause for large result sets (default LIMIT 100)
-8. Use previous conversation context to resolve pronouns and references
+2. Output must start with SELECT and contain only ONE SQL SELECT statement
+3. Do not include explanations, comments, markdown, or extra text
+4. Use only the tables and columns explicitly listed in the schema
+5. Do not invent column names, table names, or enum values
+6. Use proper MySQL syntax with backticks for table and column names
+7. Always add LIMIT clause (default LIMIT 100)
+8. NO UNION or multiple SELECT statements
 
-SEMANTIC UNDERSTANDING - ANALYZE COLUMN STATISTICS:
-9. Look at column statistics to understand data ranges and values
-10. "kids" or "children" or "kid wear" → Use size column with small values (size <= 7 or size IN (6,7))
-11. "adult" or "men" or "women" → Use size column with larger values (size >= 8)
-12. "top rated" or "best" → ORDER BY rating DESC
-13. "expensive" or "costliest" → ORDER BY price DESC
-14. "cheap" or "affordable" → ORDER BY price ASC
-15. "latest" or "new" → ORDER BY launch_year DESC
-16. If exact category doesn't exist, search in description or name using LIKE
+====================
+SEMANTIC INTERPRETATION (CRITICAL!)
+====================
+IMPORTANT: The 'gender' column typically contains: [Men, Women, Unisex]
+   - There is usually NO 'Kids' or 'Children' gender value!
+   - NEVER use WHERE gender = 'Kids' unless you see it in the sample data!
 
-QUERY PATTERN (SINGLE QUERY ONLY):
-SELECT * FROM `table_name` WHERE <condition> ORDER BY <column> LIMIT <number>;
+When interpreting natural language:
+1. "kids" / "children" / "youth" → Use SIZE filter for smaller sizes (e.g., size <= 7)
+2. "adults" → Use SIZE filter for larger sizes (e.g., size >= 9)
+3. "formal" → Look for 'Formal' in category-related columns
+4. "casual" → Look for 'Casual' in category-related columns
+5. "top rated" / "best" → ORDER BY rating column DESC
+6. "expensive" / "costliest" → ORDER BY price DESC
+7. "cheap" / "affordable" → ORDER BY price ASC
+8. "latest" / "new" → ORDER BY launch_year/created_at DESC
 
-EXAMPLES:
-- "Show me kid shoes" → SELECT * FROM `products` WHERE size <= 7 ORDER BY rating DESC LIMIT 100;
-- "Top rated kids wear" → SELECT * FROM `products` WHERE size <= 7 ORDER BY rating DESC LIMIT 100;
-- "Expensive adult shoes" → SELECT * FROM `products` WHERE size >= 8 ORDER BY price DESC LIMIT 100;
-- "Latest products" → SELECT * FROM `products` ORDER BY launch_year DESC LIMIT 100;
-
-FORBIDDEN:
-- DO NOT generate multiple queries separated by OR
-- DO NOT include explanations or comments
-- DO NOT use UNION or multiple SELECT statements"""
+====================
+SELF-CHECK BEFORE OUTPUT
+====================
+Before producing the final SQL, verify:
+- Every column used exists in the schema
+- Every literal value used is valid for that column (check sample data!)
+- If using 'gender' column, value MUST be in the sample data
+- The query answers the question directly
+- No explanatory text is included"""
 
         context_section = ""
         if chat_context:
@@ -627,32 +645,50 @@ FORBIDDEN:
 
 """
 
-        user_prompt = f"""{context_section}Tables and sample data:
+        user_prompt = f"""{context_section}====================
+DATABASE SCHEMA & SAMPLE DATA
+====================
 {tables_info}
 
-User question: {question}
+====================
+USER QUESTION
+====================
+{question}
 
-Analyze the sample rows to understand the data structure and values. Generate the SQL query using SELECT * pattern:"""
+Generate the SQL query (raw SQL only, no explanations):"""
 
         response, _ = self.llm._call_llm(system_prompt, user_prompt)
         
         sql = response.strip()
+        
+        # Clean up markdown code blocks
         if sql.startswith("```"):
             lines = sql.split("\n")
             sql_lines = []
             in_code = False
             for line in lines:
-                if line.startswith("```"):
+                if line.strip().startswith("```"):
                     in_code = not in_code
                     continue
-                if in_code or not line.startswith("```"):
+                if in_code:
                     sql_lines.append(line)
-            sql = "\n".join(sql_lines)
+            sql = "\n".join(sql_lines).strip()
         
-        sql = sql.strip()
+        # Remove "sql" prefix if present
         if sql.lower().startswith("sql"):
             sql = sql[3:].strip()
         
+        # Extract only the SELECT statement - take first line or up to semicolon
+        if "SELECT" in sql.upper():
+            # Find where SELECT starts
+            select_pos = sql.upper().find("SELECT")
+            sql = sql[select_pos:]
+        
+        # Take only first statement (up to first semicolon)
+        if ";" in sql:
+            sql = sql.split(";")[0].strip()
+        
+        # Ensure it ends with semicolon
         sql = sql.rstrip(";") + ";"
         
         return sql
@@ -773,27 +809,30 @@ Analyze the sample rows to understand the data structure and values. Generate th
 
     def _generate_retry_sql(self, question: str, tables_info: str, failed_sql: str, chat_context: str = "") -> str:
         """Generate a smarter SQL query when first attempt returns 0 rows"""
-        system_prompt = """You are an expert at reinterpreting failed SQL queries. 
-The previous query returned 0 rows. Your job is to generate a NEW query with relaxed constraints and smarter interpretation.
+        system_prompt = """You are an expert at reinterpreting failed SQL queries.
+The previous query returned 0 rows. Generate a NEW query with relaxed constraints.
+
+OUTPUT FORMAT: Raw SQL query ONLY. No explanations, no markdown, no comments.
+
+COMMON FAILURES TO FIX:
+1. Used gender = 'Kids' → FIX: Use size <= 7 instead (gender only has Men/Women/Unisex)
+2. Used non-existent category → FIX: Use LIKE '%keyword%' on description/name
+3. Too restrictive WHERE → FIX: Remove some conditions
+4. Wrong column name → FIX: Check schema for correct name
 
 REINTERPRETATION RULES:
-1. "kids" or "children" or "kid wear" → Use size column with small values (size <= 7 or size IN (6,7))
-2. "adult" or "men" or "women" → Use size column with larger values (size >= 8)
-3. "top" or "best" or "top rated" → add ORDER BY rating DESC
-4. "costliest" or "expensive" → add ORDER BY price DESC
-5. "cheapest" or "affordable" → add ORDER BY price ASC
-6. "latest" or "new" → add ORDER BY launch_year DESC or ORDER BY created_at DESC
-7. If exact category doesn't exist, search in description or name columns using LIKE
-8. Relax exact matches to partial matches (= becomes LIKE '%value%')
-9. Remove overly restrictive WHERE conditions
-10. Check if column names in failed SQL actually exist in schema
+- "kids"/"children" → WHERE size <= 7 (NOT gender = 'Kids')
+- "adult" → WHERE size >= 9
+- "top rated"/"best" → ORDER BY rating DESC
+- "expensive" → ORDER BY price DESC
+- "cheap" → ORDER BY price ASC
+- Exact match failed → Use LIKE '%value%'
 
-CRITICAL:
+CONSTRAINTS:
 - ALWAYS use SELECT * FROM pattern
-- Generate ONLY ONE SQL query - no explanations, no OR between queries
-- Make the query more lenient, not more restrictive
-- DO NOT generate multiple queries separated by OR
-- DO NOT use UNION or multiple SELECT statements"""
+- Only ONE SQL query
+- No UNION, no multiple SELECTs
+- Add LIMIT 100"""
 
         context_section = ""
         if chat_context:
@@ -802,40 +841,42 @@ CRITICAL:
 
 """
 
-        user_prompt = f"""{context_section}Tables and schema:
+        user_prompt = f"""{context_section}Schema:
 {tables_info}
 
 Original question: {question}
 
-Failed SQL (returned 0 rows):
-{failed_sql}
+Failed SQL: {failed_sql}
 
-Analyze why it failed and generate a SMARTER SINGLE query with:
-1. Relaxed constraints
-2. Intelligent reinterpretation of user intent
-3. Partial matches instead of exact matches
-4. Appropriate ORDER BY clauses
-
-Generate the improved SQL query:"""
+Generate improved SQL (raw query only):"""
 
         response, _ = self.llm._call_llm(system_prompt, user_prompt)
         
         sql = response.strip()
+        
+        # Clean up markdown
         if sql.startswith("```"):
             lines = sql.split("\n")
             sql_lines = []
             in_code = False
             for line in lines:
-                if line.startswith("```"):
+                if line.strip().startswith("```"):
                     in_code = not in_code
                     continue
-                if in_code or not line.startswith("```"):
+                if in_code:
                     sql_lines.append(line)
-            sql = "\n".join(sql_lines)
+            sql = "\n".join(sql_lines).strip()
         
-        sql = sql.strip()
         if sql.lower().startswith("sql"):
             sql = sql[3:].strip()
+        
+        # Extract SELECT statement
+        if "SELECT" in sql.upper():
+            select_pos = sql.upper().find("SELECT")
+            sql = sql[select_pos:]
+        
+        if ";" in sql:
+            sql = sql.split(";")[0].strip()
         
         sql = sql.rstrip(";") + ";"
         
