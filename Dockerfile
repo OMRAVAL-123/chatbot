@@ -32,9 +32,6 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browser with dependencies
-RUN playwright install --with-deps chromium
-
 COPY . .
 
 RUN mkdir -p docs
@@ -47,6 +44,9 @@ USER user
 
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH
+
+# Install Playwright browser AFTER switching to user (important for HF Spaces)
+RUN playwright install chromium
 
 EXPOSE 7860
 
