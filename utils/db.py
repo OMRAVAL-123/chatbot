@@ -640,6 +640,52 @@ Analyze the sample rows to understand the data structure and values. Generate th
             VALUES (%s, %s, %s, %s, %s)
         """, (session_id, user_query, final_answer, query_type, doc_used))
 
+    def _get_web_answer(self, query: str, session_id: str, prefix_note: str = "") -> Dict[str, Any]:
+        """Helper to get answer from web search with standard formatting"""
+        from utils.web_scraper import scrape_web_content
+        try:
+            web_result = scrape_web_content(query)
+            if web_result["success"]:
+                web_context = ""
+                if web_result["detailed_content"]:
+                    web_context = web_result["detailed_content"]
+                elif web_result["search_results"]:
+                    web_context = "\n\n".join([
+                        f"- {r['title']}: {r['snippet']}" 
+                        for r in web_result["search_results"][:5]
+                    ])
+                
+                if web_context:
+                    # Pass the prefix note to the LLM so it knows why we are searching the web
+                    answer_text, _ = self.llm.web_retrieval(query, web_context + (f"\n\nNote: {prefix_note}" if prefix_note else ""))
+                    
+                    final_answer = ""
+                    if prefix_note:
+                        final_answer += f"ℹ️ **Note:** {prefix_note}\n\n"
+                    
+                    final_answer += f"🌐 **Source: Web Search (Latest Information)**\n\n{answer_text}"
+                    
+                    if web_result["search_results"]:
+                        sources = "\n\n**References:**\n" + "\n".join([
+                            f"- [{r['title']}]({r['link']})" 
+                            for r in web_result["search_results"][:3]
+                        ])
+                        final_answer += sources
+                    
+                    self.save_chat(session_id, query, final_answer, "web_search", "Web")
+                    return {
+                        "answer": final_answer, 
+                        "source": "web", 
+                        "docs": [],
+                        "web_sources": web_result["search_results"][:3]
+                    }
+        except Exception as e:
+            print(f"Web scraping failed: {e}")
+        
+        answer = "No relevant documents found and web search failed. Please try a different query."
+        self.save_chat(session_id, query, answer, "none", "")
+        return {"answer": answer, "source": "none", "docs": []}
+
     def process_user_query(self, session_id: str, query: str) -> Dict[str, Any]:
         from utils.web_scraper import scrape_web_content
         
@@ -648,47 +694,18 @@ Analyze the sample rows to understand the data structure and values. Generate th
         relevant_docs = self.select_relevant_documents(query, top_k=3)
         
         if not relevant_docs or (relevant_docs and max([d.get("score", 0) for d in relevant_docs]) < 0.3):
-            try:
-                web_result = scrape_web_content(query)
-                if web_result["success"]:
-                    web_context = ""
-                    if web_result["detailed_content"]:
-                        web_context = web_result["detailed_content"]
-                    elif web_result["search_results"]:
-                        web_context = "\n\n".join([
-                            f"- {r['title']}: {r['snippet']}" 
-                            for r in web_result["search_results"][:3]
-                        ])
-                    
-                    if web_context:
-                        answer_text, _ = self.llm.web_retrieval(query, web_context)
-                        final_answer = f"🌐 **Source: Web Search** (No relevant documents found in knowledge base)\n\n{answer_text}"
-                        
-                        if web_result["search_results"]:
-                            sources = "\n\n**References:**\n" + "\n".join([
-                                f"- [{r['title']}]({r['link']})" 
-                                for r in web_result["search_results"][:3]
-                            ])
-                            final_answer += sources
-                        
-                        self.save_chat(session_id, query, final_answer, "web_search", "Web")
-                        return {
-                            "answer": final_answer, 
-                            "source": "web", 
-                            "docs": [],
-                            "web_sources": web_result["search_results"][:3]
-                        }
-            except Exception as e:
-                print(f"Web scraping failed: {e}")
-            
-            answer = "No relevant documents found in the knowledge base. Please upload documents or try a different query."
-            self.save_chat(session_id, query, answer, "none", "")
-            return {"answer": answer, "source": "none", "docs": []}
+            return self._get_web_answer(query, session_id, "No relevant documents found in the knowledge base.")
         
         query_type = self.route_query(query, relevant_docs)
         
         if query_type == "structured":
             result = self.execute_structured_query(query, relevant_docs, chat_context)
+            
+            # Check if structured query returned any actual data rows
+            if not result.get("full_data") or len(result.get("full_data")) == 0:
+                print("⚠️ Structured query returned 0 rows, falling back to web search")
+                return self._get_web_answer(query, session_id, "The internal database did not contain matching records for this query.")
+                
             doc_names = ", ".join([d["doc_name"] for d in relevant_docs if d["is_structured"]])
             self.save_chat(session_id, query, result["answer"], "structured", doc_names)
             return {

@@ -1,13 +1,7 @@
 import re
-import asyncio
+import requests
+from bs4 import BeautifulSoup
 from typing import Dict, List, Any
-
-try:
-    from playwright.async_api import async_playwright
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-
 
 class WebScraper:
     def __init__(self, llm=None):
@@ -21,270 +15,100 @@ class WebScraper:
         query_lower = query.lower()
         return any(kw in query_lower for kw in self.current_keywords)
     
-    async def _search_google_async(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
-        """Use Playwright to search Google and extract results"""
-        if not PLAYWRIGHT_AVAILABLE:
-            return []
-        
+    def search_rss(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
+        """Use Google News RSS to find latest information/news related to query"""
         results = []
-        
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                context = await browser.new_context(
-                    user_agent=self.headers["User-Agent"],
-                    viewport={"width": 1280, "height": 800}
-                )
-                page = await context.new_page()
-                
-                # Navigate to Google
-                search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
-                await page.goto(search_url, timeout=15000)
-                
-                # Wait for results to load
-                await page.wait_for_selector("div#search", timeout=10000)
-                
-                # Extract search results
-                result_elements = await page.query_selector_all("div.g")
-                
-                for elem in result_elements[:max_results]:
-                    try:
-                        # Get title
-                        title_elem = await elem.query_selector("h3")
-                        title = await title_elem.inner_text() if title_elem else ""
-                        
-                        # Get link
-                        link_elem = await elem.query_selector("a")
-                        link = await link_elem.get_attribute("href") if link_elem else ""
-                        
-                        # Get snippet
-                        snippet_elem = await elem.query_selector("div[data-sncf], div.VwiC3b, span.aCOpRe")
-                        snippet = await snippet_elem.inner_text() if snippet_elem else ""
-                        
-                        if title and link and not link.startswith("/"):
-                            results.append({
-                                "title": title,
-                                "link": link,
-                                "snippet": snippet[:500] if snippet else ""
-                            })
-                    except Exception:
-                        continue
-                
-                await browser.close()
-                
-        except Exception as e:
-            print(f"❌ Playwright search error: {type(e).__name__}: {str(e)}")
-        
-        return results
-    
-    async def _search_news_google_async(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
-        """Use Playwright to search Google News"""
-        if not PLAYWRIGHT_AVAILABLE:
-            return []
-        
-        results = []
-        
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                context = await browser.new_context(
-                    user_agent=self.headers["User-Agent"],
-                    viewport={"width": 1280, "height": 800}
-                )
-                page = await context.new_page()
-                
-                # Navigate to Google News search
-                search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}&tbm=nws"
-                await page.goto(search_url, timeout=15000)
-                
-                # Wait for results
-                await page.wait_for_selector("div#search", timeout=10000)
-                
-                # Extract news results
-                result_elements = await page.query_selector_all("div.SoaBEf, div.g")
-                
-                for elem in result_elements[:max_results]:
-                    try:
-                        # Get title
-                        title_elem = await elem.query_selector("div.n0jPhd, h3, div.mCBkyc")
-                        title = await title_elem.inner_text() if title_elem else ""
-                        
-                        # Get link
-                        link_elem = await elem.query_selector("a")
-                        link = await link_elem.get_attribute("href") if link_elem else ""
-                        
-                        # Get snippet
-                        snippet_elem = await elem.query_selector("div.GI74Re, div.VwiC3b")
-                        snippet = await snippet_elem.inner_text() if snippet_elem else ""
-                        
-                        # Get date
-                        date_elem = await elem.query_selector("span.r0bn4c, div.OSrXXb")
-                        date = await date_elem.inner_text() if date_elem else ""
-                        
-                        if title and link and not link.startswith("/"):
-                            results.append({
-                                "title": title,
-                                "link": link,
-                                "snippet": snippet[:500] if snippet else "",
-                                "date": date
-                            })
-                    except Exception:
-                        continue
-                
-                await browser.close()
-                
-        except Exception as e:
-            print(f"❌ Playwright news search error: {type(e).__name__}: {str(e)}")
-        
-        return results
-    
-    async def _get_page_content_async(self, url: str) -> Dict[str, Any]:
-        """Use Playwright to get page content"""
-        if not PLAYWRIGHT_AVAILABLE:
-            return {"success": False, "title": "", "content": "", "error": "Playwright not available"}
-        
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                context = await browser.new_context(
-                    user_agent=self.headers["User-Agent"],
-                    viewport={"width": 1280, "height": 800}
-                )
-                page = await context.new_page()
-                
-                await page.goto(url, timeout=15000)
-                await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                
-                # Get title
-                title = await page.title()
-                
-                # Get main content
-                content_parts = []
-                
-                # Try to find article/main content
-                selectors = ["article", "main", "div[role='main']", ".content", ".article-body", "#content"]
-                content_elem = None
-                
-                for selector in selectors:
-                    try:
-                        content_elem = await page.query_selector(selector)
-                        if content_elem:
-                            break
-                    except:
-                        continue
-                
-                if content_elem:
-                    paragraphs = await content_elem.query_selector_all("p, h2, h3, li")
-                else:
-                    paragraphs = await page.query_selector_all("p, h2, h3")
-                
-                for p in paragraphs[:30]:
-                    try:
-                        text = await p.inner_text()
-                        if text and len(text.strip()) > 30:
-                            content_parts.append(text.strip())
-                    except:
-                        continue
-                
-                await browser.close()
-                
-                return {
-                    "success": True,
-                    "title": title,
-                    "content": "\n\n".join(content_parts[:25]),
-                    "error": None
-                }
-                
-        except Exception as e:
-            return {"success": False, "title": "", "content": "", "error": str(e)}
-    
-    def search_news(self, query):
-        if not query or not query.strip():
-            return {"success": False, "results": [], "error": "Empty query provided"}
-        
-        if not PLAYWRIGHT_AVAILABLE:
-            return {"success": False, "results": [], "error": "Playwright not installed. Run: pip install playwright && playwright install chromium"}
-        
         try:
             # Optimize query using LLM if available
             search_query = query
             if self.llm:
                 search_query = self.llm.optimize_search_query(query)
             
-            print(f"🔍 Searching news for: {search_query}")
+            print(f"🔍 Searching RSS (Google News) for: {search_query}")
+            url = f"https://news.google.com/rss/search?q={search_query.replace(' ', '+')}"
             
-            # Run async search
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                results = loop.run_until_complete(self._search_news_google_async(search_query, max_results=10))
-            finally:
-                loop.close()
+            response = requests.get(url, headers=self.headers, timeout=15)
+            if response.status_code != 200:
+                print(f"❌ RSS search failed with status: {response.status_code}")
+                return []
             
-            print(f"📰 Found {len(results)} news results")
+            soup = BeautifulSoup(response.text, 'xml')
+            items = soup.find_all('item')
             
-            return {"success": True, "results": results, "error": None}
-        
+            for item in items[:max_results]:
+                title = item.title.text if item.title else ""
+                link = item.link.text if item.link else ""
+                pub_date = item.pubDate.text if item.pubDate else ""
+                source = item.source.text if item.source else ""
+                
+                # Description often contains HTML, let's clean it up for a snippet
+                description = item.description.text if item.description else ""
+                snippet = BeautifulSoup(description, 'html.parser').get_text() if description else ""
+                
+                if title and link:
+                    results.append({
+                        "title": title,
+                        "link": link,
+                        "snippet": snippet[:500],
+                        "date": pub_date,
+                        "source": source
+                    })
+            
+            print(f"📰 Found {len(results)} RSS results")
+            return results
+            
         except Exception as e:
-            error_msg = f"News search error: {type(e).__name__}: {str(e)}"
-            print(f"❌ {error_msg}")
-            return {"success": False, "results": [], "error": error_msg}
-    
-    def search_text(self, query):
-        if not query or not query.strip():
-            return {"success": False, "results": [], "error": "Empty query provided"}
-        
-        if not PLAYWRIGHT_AVAILABLE:
-            return {"success": False, "results": [], "error": "Playwright not installed. Run: pip install playwright && playwright install chromium"}
-        
+            print(f"❌ RSS search error: {str(e)}")
+            return []
+
+    def get_page_content(self, url: str) -> Dict[str, Any]:
+        """Try to get page content using simple requests"""
         try:
-            # Optimize query using LLM if available
-            search_query = query
-            if self.llm:
-                search_query = self.llm.optimize_search_query(query)
+            print(f"📄 Fetching content from: {url}")
+            response = requests.get(url, headers=self.headers, timeout=10)
+            if response.status_code != 200:
+                return {"success": False, "title": "", "content": "", "error": f"Status {response.status_code}"}
             
-            print(f"🔍 Searching web for: {search_query}")
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Run async search
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                results = loop.run_until_complete(self._search_google_async(search_query, max_results=10))
-            finally:
-                loop.close()
+            # Remove scripts and styles
+            for script in soup(["script", "style"]):
+                script.extract()
             
-            print(f"🌐 Found {len(results)} web results")
+            title = soup.title.string if soup.title else ""
             
-            return {"success": True, "results": results, "error": None}
-        
-        except Exception as e:
-            error_msg = f"Search error: {type(e).__name__}: {str(e)}"
-            print(f"❌ {error_msg}")
-            return {"success": False, "results": [], "error": error_msg}
-    
-    def search(self, query):
-        if self.is_current_event_query(query):
-            news_results = self.search_news(query)
-            if news_results["success"] and news_results["results"]:
-                return news_results
-        
-        return self.search_text(query)
-    
-    def get_page_content(self, url):
-        if not PLAYWRIGHT_AVAILABLE:
-            return {"success": False, "title": "", "content": "", "error": "Playwright not available"}
-        
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                result = loop.run_until_complete(self._get_page_content_async(url))
-            finally:
-                loop.close()
-            return result
+            # Simple heuristic for main content
+            content_parts = []
+            # Try to find common content areas
+            main_content = soup.find(['article', 'main', 'div.content', 'div.main-content', 'div.article-body'])
+            
+            if main_content:
+                paragraphs = main_content.find_all(['p', 'h1', 'h2', 'h3'])
+            else:
+                paragraphs = soup.find_all(['p', 'h1', 'h2', 'h3'])
+                
+            for p in paragraphs[:20]:
+                text = p.get_text().strip()
+                if len(text) > 40:
+                    content_parts.append(text)
+            
+            return {
+                "success": True,
+                "title": title,
+                "content": "\n\n".join(content_parts),
+                "error": None
+            }
         except Exception as e:
             return {"success": False, "title": "", "content": "", "error": str(e)}
 
+    def search(self, query):
+        """Main search method - using RSS as primary source"""
+        results = self.search_rss(query)
+        return {
+            "success": len(results) > 0,
+            "results": results,
+            "error": "No results found" if len(results) == 0 else None
+        }
 
 def scrape_web_content(query, llm=None):
     scraper = WebScraper(llm=llm)
@@ -298,16 +122,12 @@ def scrape_web_content(query, llm=None):
             "error": None
         }
         
-        # Try to get detailed content from top results
-        for result in search_results["results"][:2]:
-            try:
-                page_content = scraper.get_page_content(result["link"])
-                if page_content["success"] and page_content["content"]:
-                    combined_content["detailed_content"] += f"\n\n--- {result['title']} ---\n{page_content['content']}"
-                    break
-            except:
-                continue
-        
+        # Try to get more detail from the first result
+        top_url = search_results["results"][0]["link"]
+        page_content = scraper.get_page_content(top_url)
+        if page_content["success"] and page_content["content"]:
+            combined_content["detailed_content"] = f"Content from {top_url}:\n\n{page_content['content']}"
+            
         return combined_content
     
     return {
