@@ -176,6 +176,55 @@ Decision (WEB or DATABASE):"""
         
         return needs_web, reason
 
+    def route_between_structured_unstructured(self, query: str, structured_docs: List[Dict[str, Any]], unstructured_docs: List[Dict[str, Any]]) -> str:
+        """Decide between structured (SQL) and unstructured (RAG) path"""
+        if not structured_docs and not unstructured_docs:
+            return "none"
+        if not structured_docs:
+            return "unstructured"
+        if not unstructured_docs:
+            return "structured"
+
+        system_prompt = """You are a query router for a hybrid RAG system.
+You must decide if the user's question is best answered by querying a STRUCTURED database (SQL) or reading UNSTRUCTURED documents (RAG).
+
+STRUCTURED (SQL) is best for:
+- Statistical queries (counts, sums, averages, totals)
+- Comparison queries (highest price, lowest rating, top categories)
+- Filtering on specific attributes (list all products with rating > 4)
+- Questions about inventory, sales, or product listings that fit a table
+
+UNSTRUCTURED (RAG) is best for:
+- Explanatory questions (how to, why, what is the policy on...)
+- Sentiment or descriptive analysis (what do customers think about...)
+- Extracting specific facts from long documents, PDFs, or articles
+- General knowledge or history contained in text
+
+RESPONSE FORMAT:
+Return ONLY one word: "STRUCTURED" or "UNSTRUCTURED"."""
+
+        structured_info = "\n".join([f"- {d['doc_name']}: {d.get('summary', '')[:200]}" for d in structured_docs])
+        unstructured_info = "\n".join([f"- {d['doc_name']}: {d.get('summary', '')[:200]}" for d in unstructured_docs])
+
+        user_prompt = f"""User Question: {query}
+
+Available Structured Sources:
+{structured_info}
+
+Available Unstructured Sources:
+{unstructured_info}
+
+Decision:"""
+
+        response, _ = self._call_llm(system_prompt, user_prompt)
+        decision = response.strip().upper()
+        
+        if "STRUCTURED" in decision:
+            return "structured"
+        if "UNSTRUCTURED" in decision:
+            return "unstructured"
+        return "unstructured" # Default to unstructured for safety
+
     def summarize(self, text: str, filename: str) -> Tuple[str, int]:
         system_prompt = """You are a document summarization expert. Create a concise but comprehensive summary of the provided document content. 
 For structured data like CSV/XLSX, include:
