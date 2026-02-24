@@ -691,11 +691,31 @@ Analyze the sample rows to understand the data structure and values. Generate th
         
         chat_context = self.get_chat_context(session_id, limit=5)
         
+        # Step 1: Intelligent routing using LLM decision
+        # Gather basic info about current database content for the LLM to make an informed choice
+        all_docs = self.get_all_documents()
+        kb_description = "The knowledge base contains sections about: " + ", ".join([d['doc_name'] for d in all_docs[:5]]) if all_docs else "The knowledge base is empty."
+        
+        needs_web, web_reason = self.llm.should_use_web_scraping(query, kb_description)
+        print(f"🤖 Routing Decision: {'WEB' if needs_web else 'DATABASE'} | Reason: {web_reason}")
+        
+        # Step 2: Search for relevant documents
         relevant_docs = self.select_relevant_documents(query, top_k=3)
+        max_score = max([d.get("score", 0) for d in relevant_docs]) if relevant_docs else 0
         
-        if not relevant_docs or (relevant_docs and max([d.get("score", 0) for d in relevant_docs]) < 0.3):
-            return self._get_web_answer(query, session_id, "No relevant documents found in the knowledge base.")
+        # Step 3: Combined decision logic
+        # - If LLM says "WEB", go to web
+        # - If no relevant documents found in KB (score < 0.3), go to web
+        # - Otherwise, use KB
         
+        if needs_web:
+            print(f"🌐 Triggering web search due to intent detection: {web_reason}")
+            return self._get_web_answer(query, session_id, f"This appears to be a real-time or general query ({web_reason}). Searching for latest updates...")
+
+        if not relevant_docs or max_score < 0.3:
+            print(f"🔍 No strong KB match (max score: {max_score:.2f}). Falling back to web search.")
+            return self._get_web_answer(query, session_id, "I couldn't find relevant information in my documents, so I've searched the web for you.")
+            
         query_type = self.route_query(query, relevant_docs)
         
         if query_type == "structured":
