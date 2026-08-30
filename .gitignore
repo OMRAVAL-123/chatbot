@@ -1,0 +1,18 @@
+# Environments
+.env
+venv/
+env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Data
+*.csv
+*.xlsx
+
+# Databases
+*.sqlite3
+
+# OS generated files
+.DS_Store
+Thumbs.db

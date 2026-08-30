@@ -13,8 +13,7 @@ def test_routing():
     
     queries = [
         "update about ind vs pak", # Should be WEB/DATABASE decision, then unstructured if in docs
-        "what is the price of skechers casual shoes", # Should be structured
-        "how do i return a product", # Should be unstructured (if policy exists)
+        "what is backrefetrence in sed?",
         "total sales in last 3 months" # Should be structured
     ]
     

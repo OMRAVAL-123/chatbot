@@ -33,7 +33,7 @@ class DatabaseManager:
             return
 
         cert_content = self.ssl_ca_content.replace("\\n", "\n")
-        self.ssl_ca_path = "/tmp/aiven_ca.pem"
+        self.ssl_ca_path = "ENTER YOUR CA.PEM PATH HERE"
 
         with open(self.ssl_ca_path, "w") as f:
             f.write(cert_content)
